@@ -99,7 +99,13 @@ void Viewer::Run()
     pangolin::Var<bool> menuShowKeyFrames("menu.Show KeyFrames",true,true);
     pangolin::Var<bool> menuShowGraph("menu.Show Graph",true,true);
     pangolin::Var<bool> menuLocalizationMode("menu.Localization Mode",false,true);
+    pangolin::Var<bool> menuUseMask("menu.Use Mask", true, true); // Thêm dòng này
     pangolin::Var<bool> menuReset("menu.Reset",false,false);
+    // V1.3: Smart Reset — keeps the map, only drops tracking state.
+    // The system immediately tries to relocalize back into the existing map
+    // using BoW + object ellipsoids.  Falls back to hard Reset automatically
+    // if the map is too small (< 5 KFs).
+    pangolin::Var<bool> menuSmartReset("menu.Smart Reset (keep map)",false,false);
     pangolin::Var<bool> menuPause("menu.Pause",false,true);
     pangolin::Var<bool> menuCatCol("menu.Color by Cat", false, true);
     pangolin::Var<bool> menu3DBbox("menu.Disp 3D Bboxes", false, true);
@@ -132,7 +138,8 @@ void Viewer::Run()
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         mpMapDrawer->GetCurrentOpenGLCameraMatrix(Twc);
-
+	
+	mpTracker->mbUseMask = menuUseMask;
         if(menuFollowCamera && bFollow)
         {
             s_cam.Follow(Twc);
@@ -161,6 +168,8 @@ void Viewer::Run()
 
         d_cam.Activate(s_cam);
         glClearColor(1.0f,1.0f,1.0f,1.0f);
+        
+        mpMapDrawer->SetTrackingLost(mpTracker->mState == Tracking::LOST);
         if (menuShowCamera)
             mpMapDrawer->DrawCurrentCamera(Twc);
         if(menuShowKeyFrames || menuShowGraph)
@@ -200,6 +209,32 @@ void Viewer::Run()
             menuFollowCamera = true;
             mpSystem->Reset();
             menuReset = false;
+        }
+
+        // V1.3: Smart Reset — preserve map, relocalize
+        if (menuSmartReset)
+        {
+            menuSmartReset = false;
+            bool softOK = mpTracker->MapPreservingReset();
+            if (!softOK)
+            {
+                // Map too small → fall back to hard reset
+                std::cout << "[Viewer] Smart Reset fell back to hard Reset.\n";
+                menuShowGraph = true;
+                menuShowKeyFrames = true;
+                menuShowPoints = true;
+                menuLocalizationMode = false;
+                if (bLocalizationMode)
+                    mpSystem->DeactivateLocalizationMode();
+                bLocalizationMode = false;
+                bFollow = true;
+                menuFollowCamera = true;
+                mpSystem->Reset();
+            }
+            else
+            {
+                std::cout << "[Viewer] Smart Reset done — waiting for relocalization.\n";
+            }
         }
 
         if (menuQuit){

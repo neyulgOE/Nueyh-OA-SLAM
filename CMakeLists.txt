@@ -7,7 +7,9 @@ ENDIF()
 
 MESSAGE("Build type: " ${CMAKE_BUILD_TYPE})
 
-set(CMAKE_CXX_FLAGS "-std=c++17 -faligned-new -Wall -Wno-deprecated-declarations -O3 -march=native")
+set(CMAKE_CXX_FLAGS "-std=c++17 -faligned-new -Wall -Wno-deprecated-declarations -O3 -march=native -fopenmp")
+
+find_package(OpenMP REQUIRED)
 
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
 
@@ -96,6 +98,7 @@ ${PROTOBUF_LIBRARIES}
 nlohmann_json::nlohmann_json
 stdc++fs
 dlib::dlib
+OpenMP::OpenMP_CXX
 )
 
 

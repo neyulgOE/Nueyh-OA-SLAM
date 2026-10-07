@@ -46,6 +46,7 @@ public:
     LocalObjectMapping(Map* pMap, Tracking* tracker);
 
     void SetLoopCloser(LoopClosing* pLoopCloser);
+    void SetMap(Map* pMap) { mpMap = pMap; }
 
     // Main function
     void Run();

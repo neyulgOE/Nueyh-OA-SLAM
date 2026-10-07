@@ -1,31 +1,28 @@
 /**
-* This file is part of OA-SLAM.
-*
-* Copyright (C) 2022 Matthieu Zins <matthieu.zins@inria.fr>
-* (Inria, LORIA, Université de Lorraine)
-* OA-SLAM is free software: you can redistribute it and/or modify
-* it under the terms of the GNU General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* OA-SLAM is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License
-* along with OA-SLAM. If not, see <http://www.gnu.org/licenses/>.
+This file is part of OA-SLAM.
+
+Copyright (C) 2022 Matthieu Zins <matthieu.zins@inria.fr>
+(Inria, LORIA, Université de Lorraine)
+OA-SLAM is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+OA-SLAM is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with OA-SLAM. If not, see <http://www.gnu.org/licenses/>.
 */
 
-
-#include<iostream>
-#include<algorithm>
-#include<fstream>
-#include<chrono>
+#include <iostream>
+#include <algorithm>
+#include <fstream>
+#include <chrono>
 #include <stdlib.h>     /* srand, rand */
-
-#include<opencv2/core/core.hpp>
-
+#include <opencv2/core/core.hpp>
 #include <ImageDetections.h>
 #include <System.h>
 #include "Osmap.h"
@@ -34,22 +31,18 @@
 #include "Utils.h"
 
 using json = nlohmann::json;
-
 namespace fs = std::experimental::filesystem;
-
 using namespace std;
 
 void LoadImages(const string &strFile, vector<string> &vstrImageFilenames,
                 vector<double> &vTimestamps);
-
-
 
 int main(int argc, char **argv)
 {
     srand(time(nullptr));
     std::cout << "C++ version: " << __cplusplus << std::endl;
 
-    if(argc != 8)
+    if (argc != 8)
     {
         cerr << endl << "Usage:\n"
                         " ./oa-slam\n"
@@ -74,9 +67,11 @@ int main(int argc, char **argv)
     // possible to pass 'webcam_X' where 'X' is the webcam id
     bool use_webcam = false;
     int webcam_id = 0;
-    if (path_to_images.size() >= 6 && path_to_images.substr(0, 6) == "webcam") {
+    if (path_to_images.size() >= 6 && path_to_images.substr(0, 6) == "webcam")
+    {
         use_webcam = true;
-        if (path_to_images.size() > 7) {
+        if (path_to_images.size() > 7)
+        {
             webcam_id = std::stoi(path_to_images.substr(7));
         }
     }
@@ -84,7 +79,8 @@ int main(int argc, char **argv)
     // Possible to pass a file listing images instead of a folder containing a file rgb.txt or "webcam"
     std::string image_list_file = "rgb.txt";
     int nn = path_to_images.size();
-    if (!use_webcam && get_file_extension(path_to_images) == "txt") {
+    if (!use_webcam && get_file_extension(path_to_images) == "txt")
+    {
         int pos = path_to_images.find_last_of('/');
         image_list_file = path_to_images.substr(pos+1);
         path_to_images = path_to_images.substr(0, pos+1);
@@ -98,36 +94,42 @@ int main(int argc, char **argv)
         output_folder += "/";
     fs::create_directories(output_folder);
 
-
     // Load categories to ignore
     std::ifstream fin(categories_to_ignore_file);
     vector<int> classes_to_ignore;
-    if (!fin.is_open()) {
+    if (!fin.is_open())
+    {
         std::cout << "Warning !! Failed to open the file with ignore classes. No class will be ignore.\n";
-    } else {
+    }
+    else
+    {
         int cat;
-        while (fin >> cat) {
+        while (fin >> cat)
+        {
             std::cout << "Ignore category: " << cat << "\n";
             classes_to_ignore.push_back(cat);
         }
     }
 
-
     // Load object detections
     auto extension = get_file_extension(detections_file);
     std::shared_ptr<ORB_SLAM2::ImageDetectionsManager> detector = nullptr;
     bool detect_from_file = false;
-    if (extension == "onnx") { // load network
+    if (extension == "onnx")    // load network
+    {
         detector = std::make_shared<ORB_SLAM2::ObjectDetector>(detections_file, classes_to_ignore);
         detect_from_file = false;
-    } else if (extension == "json") { // load from external detections file
+    }
+    else if (extension == "json")   // load from external detections file
+    {
         detector = std::make_shared<ORB_SLAM2::DetectionsFromFile>(detections_file, classes_to_ignore);
         detect_from_file = true;
-    } else {
-        std::cout << "Invalid detection file. It should be .json or .onnx\n"
-                      "No detections will be obtained.\n";
     }
-
+    else
+    {
+        std::cout << "Invalid detection file. It should be .json or .onnx\n"
+                     "No detections will be obtained.\n";
+    }
 
     // Relocalization mode
     ORB_SLAM2::enumRelocalizationMode relocalization_mode = ORB_SLAM2::RELOC_POINTS;
@@ -137,7 +139,8 @@ int main(int argc, char **argv)
         relocalization_mode = ORB_SLAM2::RELOC_OBJECTS;
     else if (reloc_mode == std::string("points+objects"))
         relocalization_mode = ORB_SLAM2::RELOC_OBJECTS_POINTS;
-    else {
+    else
+    {
         std::cerr << "Error: Invalid parameter for relocalization mode. "
                      "It should be 'points', 'objects' or 'points+objects'.\n";
         return 1;
@@ -148,16 +151,22 @@ int main(int argc, char **argv)
     vector<string> vstrImageFilenames;
     vector<double> vTimestamps;
     int nImages = 10000;
-    if (!use_webcam) {
+    if (!use_webcam)
+    {
         string strFile = path_to_images + image_list_file;
         LoadImages(strFile, vstrImageFilenames, vTimestamps);
         nImages = vstrImageFilenames.size();
-    } else {
-        if (cap.open(webcam_id)) {
+    }
+    else
+    {
+        if (cap.open(webcam_id))
+        {
             std::cout << "Opened webcam: " << webcam_id << "\n";
             cap.set(cv::CAP_PROP_FRAME_WIDTH, 640);
             cap.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-        } else {
+        }
+        else
+        {
             std::cerr << "Failed to open webcam: " << webcam_id << "\n";
             return -1;
         }
@@ -190,7 +199,8 @@ int main(int argc, char **argv)
     {
         std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
         std::string filename;
-        if (use_webcam) {
+        if (use_webcam)
+        {
             cap >> im;  // get image from webcam
             filename = "frame_" + std::to_string(ni) + ".png";
         }
@@ -201,7 +211,7 @@ int main(int argc, char **argv)
         }
         double tframe = ni < vTimestamps.size() ? vTimestamps[ni] : std::time(nullptr);
         timestamps.push_back(tframe);
-        if(im.empty())
+        if (im.empty())
         {
             cerr << endl << "Failed to load image: "
                  << filename << endl;
@@ -211,7 +221,8 @@ int main(int argc, char **argv)
 
         // Get object detections
         std::vector<ORB_SLAM2::Detection::Ptr> detections;
-        if (detector) {
+        if (detector)
+        {
             if (detect_from_file)
                 detections = detector->detect(filename); // from detections file
             else
@@ -239,9 +250,8 @@ int main(int argc, char **argv)
             break;
     }
 
-    // Stop all threads
-    SLAM.Shutdown();
-
+    
+    
 
     // Save camera tracjectory
 
@@ -259,8 +269,6 @@ int main(int argc, char **argv)
         file << i << " " << pose(0, 0) << " " << pose(0, 1) << " " << pose(0, 2) << " " << pose(0, 3) << " "
                   << pose(1, 0) << " " << pose(1, 1) << " " << pose(1, 2) << " " << pose(1, 3) << " "
                   << pose(2, 0) << " " << pose(2, 1) << " " << pose(2, 2) << " " << pose(2, 3) << "\n";
-
-
         json R({{m(0, 0), m(0, 1), m(0, 2)},
                 {m(1, 0), m(1, 1), m(1, 2)},
                 {m(2, 0), m(2, 1), m(2, 2)}});
@@ -278,19 +286,17 @@ int main(int argc, char **argv)
     file.close();
     file_tum.close();
 
-
     // JSON files
     std::ofstream json_file(output_folder + "camera_poses_" + output_name + ".json");
     json_file << json_data;
     json_file.close();
 
-
     // Tracking time statistics
-    sort(vTimesTrack.begin(),vTimesTrack.end());
+    sort(vTimesTrack.begin(), vTimesTrack.end());
     float totaltime = 0;
-    for(int ni=0; ni<nImages; ni++)
+    for (int ni = 0; ni < nImages; ni++)
     {
-        totaltime+=vTimesTrack[ni];
+        totaltime += vTimesTrack[ni];
     }
     cout << "-------" << endl << endl;
     cout << "median tracking time: " << vTimesTrack[nImages/2] << endl;
@@ -307,11 +313,15 @@ int main(int argc, char **argv)
     // Save a reloadable map
     osmap.mapSave(output_folder + "map_" + output_name);
 
+
+    // Stop all threads
+    SLAM.Shutdown();
+    
     return 0;
 }
 
-
-void LoadImages(const string &strFile, vector<string> &vstrImageFilenames, vector<double> &vTimestamps)
+void LoadImages(const string &strFile, vector<string> &vstrImageFilenames,
+                vector<double> &vTimestamps)
 {
     ifstream f;
     f.open(strFile.c_str());
@@ -320,16 +330,18 @@ void LoadImages(const string &strFile, vector<string> &vstrImageFilenames, vecto
     double t = 0;
     int n = 0;
     bool found_timestamps = false;
-    while(!f.eof())
+
+    while (!f.eof())
     {
         string s;
-        getline(f,s);
-        if(!s.empty() && s[0] != '#')
+        getline(f, s);
+        if (!s.empty() && s[0] != '#')
         {
             stringstream ss;
             ss << s;
             string sRGB;
-            if (ss.str().find(' ') != std::string::npos) {
+            if (ss.str().find(' ') != std::string::npos)
+            {
                 ss >> t;
                 found_timestamps = true;
             }

@@ -56,6 +56,7 @@ public:
     void SetTracker(Tracking* pTracker);
 
     void SetLocalMapper(LocalMapping* pLocalMapper);
+    void SetMap(Map* pMap) { mpMap = pMap; }
 
     // Main function
     void Run();
@@ -63,6 +64,7 @@ public:
     void InsertKeyFrame(KeyFrame *pKF);
 
     void RequestReset();
+    void RequestResetNoBlock();
 
     // This function will run in a separate thread
     void RunGlobalBundleAdjustment(unsigned long nLoopKF);

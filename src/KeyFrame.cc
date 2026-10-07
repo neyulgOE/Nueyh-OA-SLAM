@@ -673,4 +673,10 @@ float KeyFrame::ComputeSceneMedianDepth(const int q)
     return vDepths[(vDepths.size()-1)/q];
 }
 
+Map* KeyFrame::GetMap()
+{
+    unique_lock<mutex> lock(mMutexConnections);
+    return mpMap;
+}
+
 } //namespace ORB_SLAM

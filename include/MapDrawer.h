@@ -76,6 +76,10 @@ public:
 
     void DrawDistanceEstimation(double depth, cv::Mat &Tcw);
 
+    void SetTrackingLost(bool lost) {
+        mTrackingLost = lost;
+    }
+
 private:
 
     float mKeyFrameSize;
@@ -91,6 +95,7 @@ private:
 
     bool use_category_cols_;
     bool display_3d_bbox_;
+    bool mTrackingLost = false;
 };
 
 } //namespace ORB_SLAM

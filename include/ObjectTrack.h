@@ -17,7 +17,6 @@
 * along with OA-SLAM. If not, see <http://www.gnu.org/licenses/>.
 */
 
-
 #ifndef OBJECT_TRACK_H
 #define OBJECT_TRACK_H
 
@@ -49,7 +48,6 @@
 #include "MapObject.h"
 
 static const size_t max_frames_history = 50;
-
 
 namespace ORB_SLAM2
 {
@@ -132,16 +130,15 @@ public:
 
     ~ObjectTrack();
     
-    
     void OptimizeReconstruction(Map* map);
 
     bool CheckReprojectionIoU(double iou_threshold);
     double CheckReprojectionIoUInKeyFrames(double iou_threshold);
 
-    // void OptimizeReconstructionCeres(Map* map);
-
     // copy detections in keyframes and remove bad keyframes
-    std::tuple<std::vector<BBox2, Eigen::aligned_allocator<BBox2>>, std::vector<Matrix34d, Eigen::aligned_allocator<Matrix34d>>, std::vector<double>>
+    std::tuple<std::vector<BBox2, Eigen::aligned_allocator<BBox2>>, 
+               std::vector<Matrix34d, Eigen::aligned_allocator<Matrix34d>>, 
+               std::vector<double>>
     CopyDetectionsInKeyFrames();
 
     void CleanBadKeyFrames();
@@ -162,7 +159,7 @@ public:
     }
 
     ObjectTrackStatus GetStatus() const {
-        std::unique_lock<std::mutex> lock(mutex_status_); // REALLY NEEDED ?
+        std::unique_lock<std::mutex> lock(mutex_status_);
         return status_;
     }
 
@@ -187,19 +184,16 @@ public:
         return last_obs_score_;
     }
 
-    std::pair<std::unordered_map<KeyFrame*, BBox2,
-                       std::hash<KeyFrame*>,
-                       std::equal_to<KeyFrame*>,
-                       Eigen::aligned_allocator<std::pair<KeyFrame const*, BBox2>>>, 
-                       std::unordered_map<KeyFrame*, double>>
-    CopyDetectionsMapInKeyFrames() const {
-        unique_lock<mutex> lock(mutex_add_detection_);
-        return {keyframes_bboxes_, keyframes_scores_};
-    }
+    std::pair<std::unordered_map<KeyFrame*, BBox2>,
+          std::unordered_map<KeyFrame*, double>>
+CopyDetectionsMapInKeyFrames() const {
+    unique_lock<mutex> lock(mutex_add_detection_);
+    return std::make_pair(keyframes_bboxes_, keyframes_scores_);
+}
+
 
     void TryResetEllipsoidFromMaPoints();
     void AssociatePointsInsideEllipsoid(Map* map);
-
 
     std::unordered_map<MapPoint*, int> GetAssociatedMapPoints() const {
         std::unique_lock<std::mutex> lock(mutex_associated_map_points_);
@@ -208,7 +202,7 @@ public:
 
     std::unordered_map<MapPoint*, int> GetFilteredAssociatedMapPoints(int threshold) const {
         std::unique_lock<std::mutex> lock(mutex_associated_map_points_);
-        int limit = threshold; //  std::max(10.0, threshold * keyframes_bboxes_.size());
+        int limit = threshold;
 
         std::unordered_map<MapPoint*, int> filtered;
         for (auto mp_cnt : associated_map_points_) {
@@ -230,26 +224,27 @@ public:
         return filtered;
     }
 
-
-// protected:
 public:
+
+    RingBuffer<BBox2, Eigen::aligned_allocator<BBox2>> bboxes_ = 
+        RingBuffer<BBox2, Eigen::aligned_allocator<BBox2>>(max_frames_history);
+
+    RingBuffer<double> scores_ = RingBuffer<double>(max_frames_history);
+    RingBuffer<Matrix34d, Eigen::aligned_allocator<Matrix34d>> Rts_ = 
+        RingBuffer<Matrix34d, Eigen::aligned_allocator<Matrix34d>>(max_frames_history);
+
     unsigned int category_id_;
     unsigned int id_;
-    int last_obs_frame_id_ = -1; // no unsigned int: need to ba able to use -1
+    int last_obs_frame_id_ = -1;
     double last_obs_score_ = 0.0;
     cv::Scalar color_;
     std::unique_ptr<MapObject> map_object_ = nullptr;
     Tracking* tracker_ = nullptr;
 
-    RingBuffer<BBox2, Eigen::aligned_allocator<BBox2>> bboxes_ = RingBuffer<BBox2, Eigen::aligned_allocator<BBox2>>(max_frames_history);
-    RingBuffer<Matrix34d, Eigen::aligned_allocator<Matrix34d>> Rts_ = RingBuffer<Matrix34d, Eigen::aligned_allocator<Matrix34d>>(max_frames_history);
-    RingBuffer<double> scores_ = RingBuffer<double>(max_frames_history);
-    std::unordered_map<KeyFrame*, BBox2,
-                       std::hash<KeyFrame*>,
-                       std::equal_to<KeyFrame*>,
-                       Eigen::aligned_allocator<std::pair<KeyFrame const*, BBox2>>> keyframes_bboxes_;
-    std::unordered_map<KeyFrame*, double> keyframes_scores_;
     
+    std::unordered_map<KeyFrame*, BBox2> keyframes_bboxes_;
+    std::unordered_map<KeyFrame*, double> keyframes_scores_;
+
     mutable std::mutex mutex_add_detection_;
     mutable std::mutex mutex_status_;
     mutable std::mutex mutex_associated_map_points_;
@@ -257,9 +252,9 @@ public:
     double unc_ = 0.0;
     std::unordered_map<MapPoint*, int> associated_map_points_;
     int degenerated_ellipsoid_ = 0;
-
 };
 
 }
 
 #endif // OBJECT_TRACK_H
+

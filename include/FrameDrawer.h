@@ -92,6 +92,7 @@ class FrameDrawer
 {
 public:
     FrameDrawer(Map* pMap);
+    void SetMap(Map* pMap) { mpMap = pMap; }
 
     // Update info from the last processed frame.
     void Update(Tracking *pTracker);

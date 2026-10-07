@@ -1,0 +1,37 @@
+# Build and library artifacts
+build/
+bin/
+lib/
+Thirdparty/**/build/
+Thirdparty/**/lib/
+Thirdparty/**/config.h
+
+# Vocabulary large text file (extracted from tar.gz)
+Vocabulary/ORBvoc.txt
+
+# Datasets, calibration images, and raw data
+Data/
+d455_calib_images/
+
+# Deep learning weights
+*.pt
+*.onnx
+
+# Editor and IDE configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs, patch dumps, and temporary files
+*.log
+*.patch
+*.diff
+git_*.txt
+patch_*.diff
+output_*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class

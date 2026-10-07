@@ -50,6 +50,10 @@ public:
     unsigned int category_id;
     double score;
     BBox2 bbox;
+    cv::Mat mask_object;
+    cv::Mat mask;              // mask toàn ảnh
+    cv::Mat mask_no_person;    // mask sau khi loại người
+    Eigen::Vector3d mean_coor;
 
 private:
     Detection() = delete;

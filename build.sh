@@ -25,7 +25,7 @@ cd ../..
 
 echo "Extracting vocabulary file ..."
 cd Vocabulary
-tar -xvf ORBvoc.txt.tar.gz
+test -f ORBvoc.txt || tar -xvf ORBvoc.txt.tar.gz
 cd ..
 
 echo "Configuring and building OA-SLAM ..."

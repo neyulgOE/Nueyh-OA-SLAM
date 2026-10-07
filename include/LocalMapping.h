@@ -45,6 +45,7 @@ public:
     void SetLoopCloser(LoopClosing* pLoopCloser);
 
     void SetTracker(Tracking* pTracker);
+    void SetMap(Map* pMap) { mpMap = pMap; }
 
     // Main function
     void Run();

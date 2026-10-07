@@ -1,4 +1,4 @@
-﻿/**
+/**
 * This file is part of OA-SLAM.
 *
 * Copyright (C) 2022 Matthieu Zins <matthieu.zins@inria.fr>
@@ -394,8 +394,11 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     int nBad=0;
     for(size_t it=0; it<4; it++)
     {
-
         vSE3->setEstimate(Converter::toSE3Quat(pFrame->mTcw));
+
+        if(nInitialCorrespondences - nBad < 3)
+            break;
+
         optimizer.initializeOptimization(0);
         optimizer.optimize(its[it]);
 

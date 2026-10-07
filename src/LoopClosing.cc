@@ -140,7 +140,15 @@ bool LoopClosing::DetectLoop()
     }
 
     // Query the database imposing the minimum score
-    vector<KeyFrame*> vpCandidateKFs = mpKeyFrameDB->DetectLoopCandidates(mpCurrentKF, minScore);
+    vector<KeyFrame*> vpCandidateKFs_unfiltered = mpKeyFrameDB->DetectLoopCandidates(mpCurrentKF, minScore);
+
+    // V1.5 Atlas: Prevent cross-map loop closures which cause segfaults in OptimizeEssentialGraph
+    vector<KeyFrame*> vpCandidateKFs;
+    for(size_t i = 0; i < vpCandidateKFs_unfiltered.size(); i++) {
+        if(vpCandidateKFs_unfiltered[i]->GetMap() == mpCurrentKF->GetMap()) {
+            vpCandidateKFs.push_back(vpCandidateKFs_unfiltered[i]);
+        }
+    }
 
     // If there are no loop candidates, just add new keyframe and return false
     if(vpCandidateKFs.empty())
@@ -631,6 +639,12 @@ void LoopClosing::RequestReset()
         }
         usleep(5000);
     }
+}
+
+void LoopClosing::RequestResetNoBlock()
+{
+    unique_lock<mutex> lock(mMutexReset);
+    mbResetRequested = true;
 }
 
 void LoopClosing::ResetIfRequested()
