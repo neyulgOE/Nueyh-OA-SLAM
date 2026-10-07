@@ -1546,13 +1546,18 @@ void Tracking::Track()
         if (mState == OK)  mnConsecutiveLostFrames = 0;
         else               mnConsecutiveLostFrames++;
 
-        // --- RESET ON PROLONGED LOST ---
+        // --- SOFT RESET ON PROLONGED LOST (PRESERVE MAP) ---
         if (mState == LOST && mnConsecutiveLostFrames >= 30)
         {
             std::cout << "[Track] LOST for " << mnConsecutiveLostFrames 
-                      << " frames! System Resetting\n";
+                      << " frames! Triggering MapPreservingReset\n";
 
-            mpSystem->Reset();
+            bool softOK = MapPreservingReset();
+            if (!softOK)
+            {
+                std::cout << "[Track] Map too small for soft reset, falling back to System Reset\n";
+                mpSystem->Reset();
+            }
             return;
         }
 
@@ -2614,6 +2619,8 @@ void Tracking::ApplyScaleCorrection(double scale_ratio)
 void Tracking::UpdateLastFrame()
 {
     KeyFrame* pRef = mLastFrame.mpReferenceKF;
+    if (!pRef || mlRelativeFramePoses.empty())
+        return;
     cv::Mat Tlr = mlRelativeFramePoses.back();
     mLastFrame.SetPose(Tlr * pRef->GetPose());
 
@@ -2652,6 +2659,9 @@ bool Tracking::TrackWithMotionModel()
 {
     ORBmatcher matcher(0.9, true);
     UpdateLastFrame();
+
+    if (mVelocity.empty() || mLastFrame.mTcw.empty())
+        return false;
 
     // V1.3: when rotating fast, use averaged rotation velocity as seed —
     // the single-frame constant-velocity pose drifts behind by ~1 frame.
@@ -3828,6 +3838,9 @@ void Tracking::Reset()
     KeyFrame::nNextId = 0;
     Frame::nNextId    = 0;
     mState            = NO_IMAGES_YET;
+    mVelocity         = cv::Mat();
+    mLastFrame        = Frame();
+    mCurrentFrame     = Frame();
 
     // V1: reset consecutive lost counter
     mnConsecutiveLostFrames = 0;
