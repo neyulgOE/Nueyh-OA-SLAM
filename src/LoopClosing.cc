@@ -32,6 +32,8 @@
 #include<thread>
 #include <unistd.h>
 #include <unordered_set>
+#include <opencv2/features2d.hpp>
+#include <opencv2/calib3d.hpp>
 
 
 namespace ORB_SLAM2
@@ -42,7 +44,7 @@ LoopClosing::LoopClosing(Map *pMap, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, 
     mpKeyFrameDB(pDB), mpORBVocabulary(pVoc), mpMatchedKF(NULL), mLastLoopKFid(0), mbRunningGBA(false), mbFinishedGBA(true),
     mbStopGBA(false), mpThreadGBA(NULL), mbFixScale(bFixScale), mnFullBAIdx(0)
 {
-    mnCovisibilityConsistencyTh = 3;
+    mnCovisibilityConsistencyTh = 2;
 }
 
 void LoopClosing::SetTracker(Tracking *pTracker)
@@ -112,6 +114,9 @@ bool LoopClosing::DetectLoop()
         mpCurrentKF->SetNotErase();
     }
 
+    // Extract Global Place Descriptor & CLAHE-SIFT features on the background LoopClosing thread
+    mpCurrentKF->ComputePlaceDescriptor();
+
     //If the map contains less than 10 KF or less than 10 KF have passed from last loop detection
     if(mpCurrentKF->mnId<mLastLoopKFid+10)
     {
@@ -139,25 +144,68 @@ bool LoopClosing::DetectLoop()
             minScore = score;
     }
 
-    // Query the database imposing the minimum score
-    vector<KeyFrame*> vpCandidateKFs_unfiltered = mpKeyFrameDB->DetectLoopCandidates(mpCurrentKF, minScore);
+    // Query the database imposing a relaxed minimum score so dense local covisibility
+    // does not block long-term loop candidates with viewpoint/illumination changes
+    float effectiveMinScore = std::min(minScore * 0.6f, 0.04f);
+    vector<KeyFrame*> vpCandidateKFs_unfiltered = mpKeyFrameDB->DetectLoopCandidates(mpCurrentKF, effectiveMinScore);
 
     // V1.5 Atlas: Prevent cross-map loop closures which cause segfaults in OptimizeEssentialGraph
     vector<KeyFrame*> vpCandidateKFs;
+    std::unordered_set<KeyFrame*> sCandidateSet;
     for(size_t i = 0; i < vpCandidateKFs_unfiltered.size(); i++) {
         if(vpCandidateKFs_unfiltered[i]->GetMap() == mpCurrentKF->GetMap()) {
             vpCandidateKFs.push_back(vpCandidateKFs_unfiltered[i]);
+            sCandidateSet.insert(vpCandidateKFs_unfiltered[i]);
         }
     }
 
-    // If there are no loop candidates, just add new keyframe and return false
+    // Stage 1b: Global Place Descriptor Top-K Retrieval (Experiment 5)
+    // Supplements ORB BoW when lighting or viewpoint changes degrade binary ORB word overlap
+    if(!mpCurrentKF->mPlaceDescriptor.empty())
+    {
+        set<KeyFrame*> spConnected = mpCurrentKF->GetConnectedKeyFrames();
+        vector<pair<float, KeyFrame*>> vPlaceScores;
+        for(KeyFrame* pKFi : mpMap->GetAllKeyFrames())
+        {
+            if(!pKFi || pKFi->isBad() || pKFi == mpCurrentKF) continue;
+            if(pKFi->GetMap() != mpCurrentKF->GetMap()) continue;
+            if(pKFi->mnId + 30 >= mpCurrentKF->mnId) continue;
+            if(spConnected.count(pKFi)) continue;
+            pKFi->ComputePlaceDescriptor();
+            if(pKFi->mPlaceDescriptor.empty()) continue;
+
+            float sim = static_cast<float>(mpCurrentKF->mPlaceDescriptor.dot(pKFi->mPlaceDescriptor));
+            if(sim >= 0.85f)
+                vPlaceScores.push_back(make_pair(sim, pKFi));
+        }
+        std::sort(vPlaceScores.begin(), vPlaceScores.end(),
+                  [](const pair<float, KeyFrame*>& a, const pair<float, KeyFrame*>& b) {
+                      return a.first > b.first;
+                  });
+        const size_t kTopK = 5;
+        for(size_t k = 0; k < std::min(kTopK, vPlaceScores.size()); ++k)
+        {
+            KeyFrame* pCand = vPlaceScores[k].second;
+            if(!sCandidateSet.count(pCand))
+            {
+                vpCandidateKFs.push_back(pCand);
+                sCandidateSet.insert(pCand);
+            }
+        }
+    }
+
+    // If there are no loop candidates, allow 2-keyframe grace before clearing consistency groups
+    static int nMissedLoopKFs = 0;
     if(vpCandidateKFs.empty())
     {
         mpKeyFrameDB->add(mpCurrentKF);
-        mvConsistentGroups.clear();
+        nMissedLoopKFs++;
+        if(nMissedLoopKFs > 2)
+            mvConsistentGroups.clear();
         mpCurrentKF->SetErase();
         return false;
     }
+    nMissedLoopKFs = 0;
 
     // For each loop candidate check consistency with previous loop candidates
     // Each candidate expands a covisibility group (keyframes connected to the loop candidate in the covisibility graph)
@@ -274,7 +322,97 @@ bool LoopClosing::ComputeSim3()
 
         int nmatches = matcher.SearchByBoW(mpCurrentKF,pKF,vvpMapPointMatches[i]);
 
-        if(nmatches<20)
+        // If direct BoW matches are sparse due to viewpoint/illumination change,
+        // enrich from pKF's covisible neighbors and Stage 2 CLAHE-SIFT Mutual NN matching
+        if(nmatches < 20)
+        {
+            vector<KeyFrame*> vpNeighs = pKF->GetBestCovisibilityKeyFrames(5);
+            for(KeyFrame* pNeighKF : vpNeighs)
+            {
+                if(!pNeighKF || pNeighKF->isBad()) continue;
+                vector<MapPoint*> vpNeighMatches;
+                matcher.SearchByBoW(mpCurrentKF, pNeighKF, vpNeighMatches);
+                for(size_t idx = 0; idx < vpNeighMatches.size() && idx < vvpMapPointMatches[i].size(); idx++)
+                {
+                    if(!vvpMapPointMatches[i][idx] && vpNeighMatches[idx] && !vpNeighMatches[idx]->isBad())
+                    {
+                        vvpMapPointMatches[i][idx] = vpNeighMatches[idx];
+                        nmatches++;
+                    }
+                }
+                if(nmatches >= 25) break;
+            }
+        }
+
+        // Stage 2 & 3 (Experiment 5): CLAHE-SIFT KNN + Lowe's Ratio (0.78) + Mutual NN + Spatial Grid Check
+        if(nmatches < 20 && !mpCurrentKF->mSiftDescriptors.empty())
+        {
+            pKF->ComputePlaceDescriptor();
+            vector<KeyFrame*> vpSiftPool = {pKF};
+            vector<KeyFrame*> vpNeighs = pKF->GetBestCovisibilityKeyFrames(3);
+            for(KeyFrame* pN : vpNeighs)
+                if(pN && !pN->isBad()) vpSiftPool.push_back(pN);
+
+            cv::BFMatcher bfL2(cv::NORM_L2, false);
+            int nSiftAdded = 0;
+            int grid3x3[3][3] = {{0}};
+            const float W = std::max(1.0f, static_cast<float>(mpCurrentKF->mnMaxX - mpCurrentKF->mnMinX));
+            const float H = std::max(1.0f, static_cast<float>(mpCurrentKF->mnMaxY - mpCurrentKF->mnMinY));
+
+            for(KeyFrame* pCandKF : vpSiftPool)
+            {
+                pCandKF->ComputePlaceDescriptor();
+                if(pCandKF->mSiftDescriptors.rows < 12) continue;
+
+                vector<vector<cv::DMatch>> knn12, knn21;
+                bfL2.knnMatch(mpCurrentKF->mSiftDescriptors, pCandKF->mSiftDescriptors, knn12, 2);
+                bfL2.knnMatch(pCandKF->mSiftDescriptors, mpCurrentKF->mSiftDescriptors, knn21, 2);
+
+                vector<int> match12(mpCurrentKF->mSiftDescriptors.rows, -1);
+                for(const auto& pair : knn12)
+                    if(pair.size() == 2 && pair[0].distance < 0.78f * pair[1].distance)
+                        match12[pair[0].queryIdx] = pair[0].trainIdx;
+
+                vector<int> match21(pCandKF->mSiftDescriptors.rows, -1);
+                for(const auto& pair : knn21)
+                    if(pair.size() == 2 && pair[0].distance < 0.78f * pair[1].distance)
+                        match21[pair[0].queryIdx] = pair[0].trainIdx;
+
+                for(size_t s1 = 0; s1 < match12.size(); ++s1)
+                {
+                    int s2 = match12[s1];
+                    if(s2 < 0 || match21[s2] != static_cast<int>(s1)) continue;
+                    int orb1 = mpCurrentKF->mvSiftToOrbIdx[s1];
+                    int orb2 = pCandKF->mvSiftToOrbIdx[s2];
+                    if(orb1 < 0 || orb2 < 0) continue;
+                    if(vvpMapPointMatches[i][orb1]) continue;
+                    MapPoint* pMP = pCandKF->GetMapPoint(orb2);
+                    if(!pMP || pMP->isBad()) continue;
+
+                    vvpMapPointMatches[i][orb1] = pMP;
+                    nmatches++;
+                    nSiftAdded++;
+                    const cv::Point2f& pt = mpCurrentKF->mvKeysUn[orb1].pt;
+                    int gx = std::min(2, std::max(0, static_cast<int>((pt.x / W) * 3.0f)));
+                    int gy = std::min(2, std::max(0, static_cast<int>((pt.y / H) * 3.0f)));
+                    grid3x3[gy][gx]++;
+                }
+                if(nmatches >= 30) break;
+            }
+            if(nSiftAdded > 0)
+            {
+                int occupiedCells = 0;
+                for(int r = 0; r < 3; ++r)
+                    for(int c = 0; c < 3; ++c)
+                        if(grid3x3[r][c] > 0) occupiedCells++;
+                std::cout << "[LoopClosing-SIFT] Enriched +" << nSiftAdded
+                          << " 3D matches (total=" << nmatches
+                          << ", grid=" << occupiedCells << "/9) for CurKF="
+                          << mpCurrentKF->mnId << " <-> CandKF=" << pKF->mnId << "\n";
+            }
+        }
+
+        if(nmatches<12)
         {
             vbDiscarded[i] = true;
             continue;
@@ -282,7 +420,7 @@ bool LoopClosing::ComputeSim3()
         else
         {
             Sim3Solver* pSolver = new Sim3Solver(mpCurrentKF,pKF,vvpMapPointMatches[i],mbFixScale);
-            pSolver->SetRansacParameters(0.99,20,300);
+            pSolver->SetRansacParameters(0.99,12,300);
             vpSim3Solvers[i] = pSolver;
         }
 
@@ -330,13 +468,13 @@ bool LoopClosing::ComputeSim3()
                 cv::Mat R = pSolver->GetEstimatedRotation();
                 cv::Mat t = pSolver->GetEstimatedTranslation();
                 const float s = pSolver->GetEstimatedScale();
-                matcher.SearchBySim3(mpCurrentKF,pKF,vpMapPointMatches,s,R,t,7.5);
+                matcher.SearchBySim3(mpCurrentKF,pKF,vpMapPointMatches,s,R,t,10.0);
 
                 g2o::Sim3 gScm(Converter::toMatrix3d(R),Converter::toVector3d(t),s);
                 const int nInliers = Optimizer::OptimizeSim3(mpCurrentKF, pKF, vpMapPointMatches, gScm, 10, mbFixScale);
 
                 // If optimization is succesful stop ransacs and continue
-                if(nInliers>=20)
+                if(nInliers>=15)
                 {
                     bMatch = true;
                     mpMatchedKF = pKF;
@@ -382,7 +520,7 @@ bool LoopClosing::ComputeSim3()
     }
 
     // Find more matches projecting with the computed Sim3
-    matcher.SearchByProjection(mpCurrentKF, mScw, mvpLoopMapPoints, mvpCurrentMatchedPoints,10);
+    matcher.SearchByProjection(mpCurrentKF, mScw, mvpLoopMapPoints, mvpCurrentMatchedPoints,15);
 
     // If enough matches accept Loop
     int nTotalMatches = 0;
@@ -392,8 +530,11 @@ bool LoopClosing::ComputeSim3()
             nTotalMatches++;
     }
 
-    if(nTotalMatches>=40)
+    if(nTotalMatches>=25)
     {
+        std::cout << "[LoopClosing] ComputeSim3 ACCEPTED: CurrentKF=" << mpCurrentKF->mnId
+                  << " MatchedKF=" << mpMatchedKF->mnId
+                  << " totalMatches=" << nTotalMatches << std::endl;
         for(int i=0; i<nInitialCandidates; i++)
             if(mvpEnoughConsistentCandidates[i]!=mpMatchedKF)
                 mvpEnoughConsistentCandidates[i]->SetErase();

@@ -285,11 +285,9 @@ void Tracking::LoadQualityThresholds(const string& strSettingPath)
 // ===========================================================================
 void Tracking::StartRecoveryThread()
 {
-    mbStopRecoveryThread.store(false);
+    mbStopRecoveryThread.store(true);
     mbRecoveryHasWork.store(false);
     mbRecoveryThreadBusy.store(false);
-    mRecoveryThread = std::thread(&Tracking::RecoveryThreadLoop, this);
-    std::cout << "[RecoveryThread] Background LOST-recovery worker started.\n";
 }
 
 // ===========================================================================
@@ -1181,16 +1179,60 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat& im, const double& timestamp,
                 cvToEigenMatrix<double, float, 3, 4>(mCurrentFrame.mTcw));
     }
 
-    // V1: seed LK bridge
-    mImGray.copyTo(mPrevGray);
+    // V1: seed LK bridge (keep mPrevGray strictly synchronized with mvPrevPts)
     if (mState == OK) {
-        mvPrevPts.clear(); mvPrevMPs.clear();
+        std::vector<cv::Point2f> newPts;
+        std::vector<MapPoint*> newMPs;
+        std::unordered_set<MapPoint*> seenMPs;
         for (int i = 0; i < mCurrentFrame.N; ++i) {
             MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
-            if (pMP && !mCurrentFrame.mvbOutlier[i] && !pMP->isBad() && pMP->Observations() >= 2) {
-                mvPrevPts.push_back(mCurrentFrame.mvKeysUn[i].pt);
-                mvPrevMPs.push_back(pMP);
+            if (pMP && !mCurrentFrame.mvbOutlier[i] && !pMP->isBad()) {
+                newPts.push_back(mCurrentFrame.mvKeys[i].pt);
+                newMPs.push_back(pMP);
+                seenMPs.insert(pMP);
             }
+        }
+
+        // Replenish LK seeds: project other visible MapPoints from local map
+        if (newPts.size() < 80 && !mCurrentFrame.mTcw.empty()) {
+            cv::Mat Rcw = mCurrentFrame.mTcw.rowRange(0,3).colRange(0,3);
+            cv::Mat tcw = mCurrentFrame.mTcw.rowRange(0,3).col(3);
+            float fx = mCurrentFrame.fx;
+            float fy = mCurrentFrame.fy;
+            float cx = mCurrentFrame.cx;
+            float cy = mCurrentFrame.cy;
+
+            for (MapPoint* pMP : mvpLocalMapPoints) {
+                if (!pMP || pMP->isBad() || seenMPs.count(pMP)) continue;
+                if (!mCurrentFrame.isInFrustum(pMP, 0.5f)) continue;
+
+                cv::Mat x3Dw = pMP->GetWorldPos();
+                cv::Mat x3Dc = Rcw * x3Dw + tcw;
+                float z = x3Dc.at<float>(2);
+                if (z <= 0.2f) continue;
+
+                float u = fx * (x3Dc.at<float>(0) / z) + cx;
+                float v = fy * (x3Dc.at<float>(1) / z) + cy;
+                if (u < 10.0f || u >= mImGray.cols - 10.0f || v < 10.0f || v >= mImGray.rows - 10.0f)
+                    continue;
+
+                if (mbUseMask) {
+                    const cv::Mat& emask = mCurrentFrame.GetExcludeMask();
+                    if (!emask.empty() && emask.at<uchar>((int)v, (int)u) == 0)
+                        continue;
+                }
+
+                newPts.emplace_back(u, v);
+                newMPs.push_back(pMP);
+                seenMPs.insert(pMP);
+                if (newPts.size() >= 120) break;
+            }
+        }
+
+        if (newPts.size() >= 5) {
+            mvPrevPts = newPts;
+            mvPrevMPs = newMPs;
+            mImGray.copyTo(mPrevGray);
         }
     }
 
@@ -1303,6 +1345,12 @@ void Tracking::Track()
                 if (mVelocity.empty() || mCurrentFrame.mnId < mnLastRelocFrameId + 2)
                 {
                     bOK = TrackReferenceKeyFrame();
+                    if (!bOK)
+                        bOK = TrackReferenceKeyFrameMultiSeed();
+                    if (!bOK && mvPrevPts.size() >= 5) {
+                        bOK = TrackWithOpticalFlow();
+                        if (bOK) std::cout << "[Track] LK saved empty-velocity frame\n";
+                    }
                 }
                 else
                 {
@@ -1316,21 +1364,18 @@ void Tracking::Track()
                                   << " deg -> MultiSeed\n";
                         bOK = TrackReferenceKeyFrameMultiSeed();
                         if (bOK) {
-                            mVelocity = cv::Mat();
                             std::cout << "[Track] MultiSeed OK\n";
                         } else {
                             // Fallback 1: rotation-aware projection search
                             // (no BoW bias, uses averaged velocity as seed)
                             bOK = TrackByProjectionFastPan();
                             if (bOK) {
-                                mVelocity = cv::Mat();
                                 std::cout << "[Track] FastPan projection OK\n";
                             } else {
                                 // Fallback 2: LK bridge
-                                if (mSensor != System::MONOCULAR && mvPrevPts.size() >= 8) {
+                                if (mvPrevPts.size() >= 5) {
                                     bOK = TrackWithOpticalFlow();
                                     if (bOK) {
-                                        mVelocity = cv::Mat();
                                         std::cout << "[Track] LK saved large-rot\n";
                                     }
                                 }
@@ -1346,8 +1391,10 @@ void Tracking::Track()
                         bOK = TrackWithMotionModel();
                         if (!bOK)
                             bOK = TrackReferenceKeyFrame();
+                        if (!bOK)
+                            bOK = TrackReferenceKeyFrameMultiSeed();
                         // V1: LK fallback for normal-motion failures
-                        if (mSensor != System::MONOCULAR && !bOK && mvPrevPts.size() >= 8) {
+                        if (!bOK && mvPrevPts.size() >= 5) {
                             bOK = TrackWithOpticalFlow();
                             if (bOK)
                                 std::cout << "[Track] LK bridge saved normal-path\n";
@@ -1358,84 +1405,77 @@ void Tracking::Track()
             else
             {
                 // LOST — cheapest recovery first, most expensive last.
-                // V1.1: order changed from v1 (full reloc first) to v0.1-style
-                // (quick covisibility -> LK -> full reloc), since most LOST
-                // episodes are brief occlusions/blur, not real relocalization.
                 bool bOK_local = QuickCovisibilityRecovery();
 
-                if (mSensor != System::MONOCULAR && !bOK_local && mvPrevPts.size() >= 8) {
+                if (!bOK_local && mvPrevPts.size() >= 5) {
                     bOK_local = TrackWithOpticalFlow();
                     if (bOK_local)
                         std::cout << "[Track] LK recovered from LOST\n";
                 }
 
-                // V1.8: rotation-seeded projection recovery — fast-pan LOST
-                // scenario. Tried AFTER QuickCovisibilityRecovery and LK both
-                // fail, BEFORE the expensive async background recovery chain.
-                // Only runs when mRotVelHistory is non-empty (camera was
-                // actively rotating just before going LOST). Uses a
-                // rotation-extrapolated seed + wide 50px radius, and rebuilds
-                // local map from covisibility KFs when mvpLocalMapPoints is
-                // stale/empty (the normal case in the LOST branch).
-                if (mSensor != System::MONOCULAR && !bOK_local)
+                if (!bOK_local)
                 {
                     bOK_local = QuickRotationRecovery();
                     if (bOK_local)
                         std::cout << "[Track] QuickRotationRecovery recovered from LOST\n";
                 }
 
-                // V1.6: the heavy recovery steps (BoW-independent projection
-                // over all map KFs, full BoW-based Relocalization()) no longer
-                // run synchronously here. They were the actual source of the
-                // "đơ" (freeze) — each LOST frame was paying their full cost
-                // every single time, mostly failing, with no backoff. They now
-                // run on a dedicated background thread (see RecoveryThreadLoop)
-                // against its OWN Frame copy, throttled to at most one attempt
-                // in flight (kRecoveryThreadMinIntervalMs apart). The main
-                // thread here only does two cheap, non-blocking things:
-                //   1. Check whether the background thread just published a
-                //      successful pose for an earlier frame — if so, apply it.
-                //   2. If still LOST, hand the background thread a fresh
-                //      snapshot to work on NEXT, but only if it's idle.
-                // Both calls return immediately; viewer frame rate is no
-                // longer coupled to relocalization cost at all.
-                bool bScaleRecoveryNeeded = false;
                 if (!bOK_local)
                 {
-                    bOK_local = ConsumePublishedRecoveryResultIfAny();
+                    bOK_local = RelocalizationByProjectionAllKFs();
+                    if (bOK_local)
+                        std::cout << "[Track] RelocalizationByProjectionAllKFs recovered from LOST\n";
+                }
+
+                bool bScaleRecoveryNeeded = false;
+                // If fast local recovery failed, run full relocalization synchronously
+                if (!bOK_local)
+                {
+                    int mode = mpSystem->GetRelocalizationMode();
+                    if (mode == RELOC_POINTS)
+                        bOK_local = Relocalization();
+                    else if (mode == RELOC_OBJECTS)
+                        bOK_local = RelocalizationFromObjects(false);
+                    else if (mode == RELOC_OBJECTS_POINTS) {
+                        bOK_local = Relocalization();
+                        if (!bOK_local) bOK_local = RelocalizationFromObjects(true);
+                    }
                     if (bOK_local)
                     {
-                        std::cout << "[Track] Background recovery thread "
-                                  << "recovered from LOST\n";
-                        bScaleRecoveryNeeded = true; // pose came from a stale-ish snapshot
-                    }
-                    else
-                    {
-                        OfferRecoverySnapshotIfIdle();
+                        std::cout << "[Track] Full Relocalization recovered from LOST\n";
+                        bScaleRecoveryNeeded = true;
                     }
                 }
 
+                // Escalation: scan all map KFs when local covisibility & BoW reloc fail
+                // (e.g. when turning back out from a textureless wall)
+                if (!bOK_local)
+                {
+                    bOK_local = RelocalizationByProjectionAllKFsBruteForce();
+                    if (bOK_local)
+                        std::cout << "[Track] RelocalizationByProjectionAllKFsBruteForce recovered from LOST\n";
+                }
+
                 // V1.5: stale-recovery escalation watchdog.
-                // Only tracked while we're inside a post-soft-reset recovery
-                // window (mbPostResetBoost). Without async offload this used
-                // to mean "retry with a brute-force scan"; now the background
-                // thread already scans every KF in the map on its own — so the
-                // watchdog's job is reduced to: if recovery is taking too long
-                // even with the background thread helping, give up and fall
-                // back to hard Reset() (observed to be reliable), since that's
-                // strictly better than waiting forever on a soft reset that
-                // was seeded badly.
+                // Never destroy a mature map (>= 8 KFs) when facing a wall; only hard-reset
+                // if the initial map was tiny and corrupted.
                 if (!bOK_local && mbPostResetBoost)
                 {
                     mnPostResetLostFrames++;
                     if (mnPostResetLostFrames >= kStaleRecoveryGiveUpFrames)
                     {
-                        std::cout << "[Track] Stale recovery exceeded "
-                                  << kStaleRecoveryGiveUpFrames
-                                  << " frames (background thread included), soft "
-                                  << "reset failed -> falling back to hard Reset().\n";
-                        mpSystem->Reset();
-                        return;
+                        if (mpMap->KeyFramesInMap() < 8)
+                        {
+                            std::cout << "[Track] Stale recovery exceeded "
+                                      << kStaleRecoveryGiveUpFrames
+                                      << " frames on tiny map -> falling back to hard Reset().\n";
+                            mpSystem->Reset();
+                            return;
+                        }
+                        else
+                        {
+                            mnPostResetLostFrames = 0;
+                        }
                     }
                 }
                 else if (bOK_local && mbPostResetBoost)
@@ -1646,7 +1686,12 @@ void Tracking::Track()
                 if (cur_d > 0)
                 {
                     double ratio = cur_d / mPreLostMedianDepth;
-                    if (ratio < 0.4 || ratio > 2.5)
+                    if (ratio < 0.1 || ratio > 10.0) {
+                        // Extreme ratio indicates an outlier depth calculation or reference KF switch;
+                        // discard the snapshot rather than blocking all future KeyFrames!
+                        mPreLostMedianDepth = -1.0f;
+                    }
+                    else if (ratio < 0.4 || ratio > 2.5)
                     {
                         bScaleSane = false;
                         std::cout << "[ScaleGuard] KF rejected: depth ratio=" << ratio
@@ -1658,6 +1703,7 @@ void Tracking::Track()
             if (bScaleSane && NeedNewKeyFrame()) {
                 CreateNewKeyFrame();
                 createdNewKeyFrame_ = true;
+                mPreLostMedianDepth = -1.0f;
             }
 
             for (int i = 0; i < mCurrentFrame.N; i++)
@@ -1833,7 +1879,7 @@ void Tracking::CreateInitialMapMonocular()
 
     float medianDepth    = pKFini->ComputeSceneMedianDepth(2);
     float invMedianDepth = 1.0f / medianDepth;
-    if (medianDepth < 0 || pKFcur->TrackedMapPoints(1) < 100) {
+    if (medianDepth < 0 || pKFcur->TrackedMapPoints(1) < 50) {
         cout << "Wrong initialization, reseting...\n";
         Reset(); return;
     }
@@ -2082,10 +2128,18 @@ bool Tracking::QuickCovisibilityRecovery()
     }
 
     std::vector<KeyFrame*> vpQR;
-    vpQR.push_back(mpReferenceKF);
-    auto covis = mpReferenceKF->GetBestCovisibilityKeyFrames(5);
-    for (auto* k : covis)
-        if (k && !k->isBad()) vpQR.push_back(k);
+    std::unordered_set<KeyFrame*> sSeenKFs;
+    if (mpReferenceKF && !mpReferenceKF->isBad()) {
+        vpQR.push_back(mpReferenceKF);
+        sSeenKFs.insert(mpReferenceKF);
+        auto covis = mpReferenceKF->GetBestCovisibilityKeyFrames(15);
+        for (auto* k : covis)
+            if (k && !k->isBad() && sSeenKFs.insert(k).second)
+                vpQR.push_back(k);
+    }
+    for (auto* k : mvpLocalKeyFrames)
+        if (k && !k->isBad() && sSeenKFs.insert(k).second)
+            vpQR.push_back(k);
 
     ORBmatcher matcher(0.9, true);
 
@@ -2121,20 +2175,42 @@ bool Tracking::QuickCovisibilityRecovery()
         std::cout << "[QuickCovis] Rot-extrap pass failed, trying normal seed.\n";
     }
 
-    // ── Pass 2: normal seed (mLastFrame or per-KF pose), radius 25px ─────────
+    // ── Pass 2: normal seed (mLastFrame and per-KF pose), radius 25px ─────────
     for (auto* pKF : vpQR)
     {
         if (!pKF || pKF->isBad()) continue;
 
-        // V1.7: prefer the real last-known pose (closer to truth during
-        // ordinary tracking, including fast pans) over a candidate KF's
-        // static pose; only use the KF's own pose post-soft-reset, when
-        // mLastFrame is just a placeholder.
-        mCurrentFrame.SetPose(bLastFrameSeedTrustworthy ? mLastFrame.mTcw
-                                                         : pKF->GetPose());
+        // Try mLastFrame.mTcw first if trustworthy
+        if (bLastFrameSeedTrustworthy)
+        {
+            mCurrentFrame.SetPose(mLastFrame.mTcw);
+            std::set<MapPoint*> sFound;
+            int nm = matcher.SearchByProjection(mCurrentFrame, pKF, sFound, 25, 100);
+            if (nm >= 10)
+            {
+                Optimizer::PoseOptimization(&mCurrentFrame);
+                int nIn = 0;
+                for (int i = 0; i < mCurrentFrame.N; i++)
+                    if (mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
+                        nIn++;
+
+                if (nIn >= 10)
+                {
+                    std::cout << "[QuickCovis] Normal seed OK (" << nIn << " inliers, KF "
+                              << pKF->mnId << ")\n";
+                    mpReferenceKF = pKF;
+                    mCurrentFrame.mpReferenceKF = pKF;
+                    mbLastRecoveryWasQuickCovis = true;
+                    return true;
+                }
+            }
+        }
+
+        // Also try candidate KF's own pose as seed
+        mCurrentFrame.SetPose(pKF->GetPose());
         std::set<MapPoint*> sFound;
         int nm = matcher.SearchByProjection(mCurrentFrame, pKF, sFound, 25, 100);
-        if (nm < 12) continue;
+        if (nm < 10) continue;
 
         Optimizer::PoseOptimization(&mCurrentFrame);
         int nIn = 0;
@@ -2144,11 +2220,11 @@ bool Tracking::QuickCovisibilityRecovery()
 
         if (nIn >= 10)
         {
-            std::cout << "[QuickCovis] Normal seed OK (" << nIn << " inliers, KF "
+            std::cout << "[QuickCovis] KF-pose seed OK (" << nIn << " inliers, KF "
                       << pKF->mnId << ")\n";
             mpReferenceKF = pKF;
             mCurrentFrame.mpReferenceKF = pKF;
-            mbLastRecoveryWasQuickCovis = true;  // ← THÊM
+            mbLastRecoveryWasQuickCovis = true;
             return true;
         }
     }
@@ -2271,7 +2347,11 @@ bool Tracking::RelocalizationByProjectionAllKFs()
         mpReferenceKF = bestKF;
         mCurrentFrame.mpReferenceKF = bestKF;
     }
-    return nFinal >= mProjRelocMinInliers / 2;
+    if (nFinal >= mProjRelocMinInliers / 2) {
+        mbLastRecoveryWasQuickCovis = true;
+        return true;
+    }
+    return false;
 }
 
 // ===========================================================================
@@ -2303,7 +2383,7 @@ bool Tracking::RelocalizationByProjectionAllKFsBruteForce()
         return false;
     }
 
-    const int th = 30;
+    const int th = 45;
     int bestInliers = 0;
     cv::Mat bestTcw;
     vector<MapPoint*> bestMPs;
@@ -2320,7 +2400,7 @@ bool Tracking::RelocalizationByProjectionAllKFsBruteForce()
 
         std::set<MapPoint*> sFound; // empty = search all of pKF's MapPoints
         int nm = matcher.SearchByProjection(mCurrentFrame, pKF, sFound, th, 100);
-        if (nm < 15) continue;
+        if (nm < 10) continue;
 
         Optimizer::PoseOptimization(&mCurrentFrame);
 
@@ -2335,15 +2415,11 @@ bool Tracking::RelocalizationByProjectionAllKFsBruteForce()
             bestTcw     = mCurrentFrame.mTcw.clone();
             bestMPs     = mCurrentFrame.mvpMapPoints;
             bestKF      = pKF;
-            if (nIn >= 50) break; // good enough, stop early
+            if (nIn >= 40) break; // good enough, stop early
         }
     }
 
-    // Lower bar than the covisibility-limited version: this is a last-resort
-    // escalation, and TrackLocalMap() right after will still reject a truly
-    // bad pose via its own inlier threshold — so we just need enough to give
-    // the recovery a fighting chance, not a final confirmation.
-    const int minInliers = std::max(15, mProjRelocMinInliers / 2);
+    const int minInliers = std::max(10, mProjRelocMinInliers / 2);
     if (bestInliers < minInliers || bestTcw.empty())
     {
         std::cout << "[BruteForceReloc] Failed across " << vpAllKFs.size()
@@ -2374,14 +2450,15 @@ bool Tracking::RelocalizationByProjectionAllKFsBruteForce()
 
     mnLastRelocFrameId = mCurrentFrame.mnId;
     if (bestKF) {
-        // Re-seed reference KF AND reset the boost/escalation counters — this
-        // is effectively a fresh, correctly-anchored starting point for the
-        // post-soft-reset recovery.
         mpReferenceKF = bestKF;
         mCurrentFrame.mpReferenceKF = bestKF;
         mnPostResetLostFrames = 0;
     }
-    return nFinal >= minInliers / 2;
+    if (nFinal >= minInliers / 2) {
+        mbLastRecoveryWasQuickCovis = true;
+        return true;
+    }
+    return false;
 }
 
 // ===========================================================================
@@ -2471,8 +2548,44 @@ bool Tracking::QuickRotationRecovery()
         nmatches = matcher.SearchByProjection(mCurrentFrame, vpLocalMPs, 75);
     }
 
-    std::cout << "[QuickRotRecov] Projection matches: " << nmatches << "\n";
     if (nmatches < 10) return false;
+
+    // Use solvePnPRansac to filter outliers from wide projection search before PoseOptimization
+    std::vector<cv::Point3f> pts3d;
+    std::vector<cv::Point2f> pts2d;
+    std::vector<int> match_indices;
+    for (int i = 0; i < mCurrentFrame.N; i++) {
+        MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+        if (pMP && !pMP->isBad()) {
+            cv::Mat wpos = pMP->GetWorldPos();
+            pts3d.emplace_back(wpos.at<float>(0), wpos.at<float>(1), wpos.at<float>(2));
+            pts2d.push_back(mCurrentFrame.mvKeysUn[i].pt);
+            match_indices.push_back(i);
+        }
+    }
+
+    if (pts3d.size() >= 8) {
+        cv::Mat rvec, tvec;
+        cv::Rodrigues(mCurrentFrame.mTcw.rowRange(0,3).colRange(0,3), rvec);
+        tvec = mCurrentFrame.mTcw.rowRange(0,3).col(3).clone();
+        std::vector<int> inliers_idx;
+        bool pnp_ok = cv::solvePnPRansac(pts3d, pts2d, mK, mDistCoef, rvec, tvec, true, 100, 8.0f, 0.99, inliers_idx, cv::SOLVEPNP_ITERATIVE);
+        if (pnp_ok && inliers_idx.size() >= 8) {
+            std::vector<bool> isInlier(match_indices.size(), false);
+            for (int idx : inliers_idx) isInlier[idx] = true;
+            for (size_t j = 0; j < match_indices.size(); j++) {
+                if (!isInlier[j]) {
+                    mCurrentFrame.mvpMapPoints[match_indices[j]] = nullptr;
+                }
+            }
+            cv::Mat R_mat; cv::Rodrigues(rvec, R_mat);
+            R_mat.convertTo(R_mat, CV_32F); tvec.convertTo(tvec, CV_32F);
+            cv::Mat Tcw = cv::Mat::eye(4,4,CV_32F);
+            R_mat.copyTo(Tcw.rowRange(0,3).colRange(0,3));
+            tvec.copyTo(Tcw.rowRange(0,3).col(3));
+            mCurrentFrame.SetPose(Tcw);
+        }
+    }
 
     Optimizer::PoseOptimization(&mCurrentFrame);
 
@@ -2497,6 +2610,7 @@ bool Tracking::QuickRotationRecovery()
     if (nmatchesMap >= 10)
     {
         mnLastRelocFrameId = mCurrentFrame.mnId;
+        mbLastRecoveryWasQuickRot = true;
         return true;
     }
     return false;
@@ -2694,15 +2808,22 @@ bool Tracking::TrackWithMotionModel()
         }
     }
 
+    // Dynamic search radius scaling during fast rotation
+    if (rotDeg > 2.0) {
+        th = std::min(120, (int)(th * (1.0f + (rotDeg - 2.0f) * 0.25f)));
+    }
+
     int nmatches = matcher.SearchByProjection(mCurrentFrame, mLastFrame, th,
                                                mSensor == System::MONOCULAR);
     if (nmatches < 20) {
         fill(mCurrentFrame.mvpMapPoints.begin(), mCurrentFrame.mvpMapPoints.end(),
              static_cast<MapPoint*>(NULL));
-        nmatches = matcher.SearchByProjection(mCurrentFrame, mLastFrame, 2*th,
+        int th_wide = std::min(150, 2*th);
+        nmatches = matcher.SearchByProjection(mCurrentFrame, mLastFrame, th_wide,
                                                mSensor == System::MONOCULAR);
     }
-    if (nmatches < 20) return false;
+    int minRequired = (rotDeg > 4.0 || mbUseMask) ? 12 : 20;
+    if (nmatches < minRequired) return false;
 
     Optimizer::PoseOptimization(&mCurrentFrame);
 
@@ -2721,7 +2842,8 @@ bool Tracking::TrackWithMotionModel()
         }
     }
     if (mbOnlyTracking) { mbVO = nmatchesMap < 10; return nmatches > 20; }
-    return nmatchesMap >= 10;
+    int minFinal = (rotDeg > 4.0) ? 8 : 10;
+    return nmatchesMap >= minFinal;
 }
 
 // ===========================================================================
@@ -2815,7 +2937,7 @@ bool Tracking::TrackLocalMap()
     }
 
     // ── V1: flexible inlier threshold ────────────────────────────────────────
-    int thresh = 30; // V0 default
+    int thresh = 20; // V0 default 30 -> 20 for Monocular robustness
 
     if (mbUseMask && nStable < 15) {
         float personArea = 0, frameArea = float(mImGray.cols * mImGray.rows);
@@ -2823,22 +2945,32 @@ bool Tracking::TrackLocalMap()
             if (det->category_id != PERSON_CLASS_ID) continue;
             personArea += (det->bbox[2]-det->bbox[0]) * (det->bbox[3]-det->bbox[1]);
         }
-        if (personArea / frameArea > 0.25f) {
+        if (personArea / frameArea > 0.20f) {
             thresh = 10; // hard floor — never go below this
             std::cout << "[TrackLocalMap] Heavy occlusion: thresh=" << thresh
                       << " stableInliers=" << nStable << "\n";
         }
     }
 
-    // V1.9: sau QuickCovisibilityRecovery (cheap bridge), chỉ cần
-    // mnMatchesInliers >= thresh (có thể = 10 khi occlusion). Điều kiện
-    // "≥50 inliers ngay sau reloc" chỉ áp dụng cho full Relocalization()
-    // thật sự (PnP RANSAC + nhiều KF candidate) — không phải QuickCovis.
-    if (!mbLastRecoveryWasQuickCovis &&
-        mCurrentFrame.mnId < mnLastRelocFrameId + mMaxFrames &&
-        mnMatchesInliers < 50)
+    bool bLocalBridgeRecovery = mbLastRecoveryWasQuickCovis || (mnLKFallbackFrames > 0) || mbLastRecoveryWasLK || mbLastRecoveryWasQuickRot || mbInertiaMode;
+    if (bLocalBridgeRecovery) {
+        if (mnLKFallbackFrames > 0 || mbLastRecoveryWasLK)
+            thresh = std::min(thresh, 5);
+        else if (mbInertiaMode)
+            thresh = std::min(thresh, 10);
+        else
+            thresh = std::min(thresh, 8);
+    }
+    const int postRelocFloor = mbPostResetBoost ? 10 : std::min(15, mRelocMinGoodInliers);
+    if (!bLocalBridgeRecovery &&
+        mCurrentFrame.mnId < mnLastRelocFrameId + mMinFrames + 2 &&
+        mnMatchesInliers < postRelocFloor)
         return false;
-    mbLastRecoveryWasQuickCovis = false; // consumed
+
+    mbLastRecoveryWasQuickCovis = false;
+    mbLastRecoveryWasLK = false;
+    mbLastRecoveryWasQuickRot = false;
+
     if (mnMatchesInliers < thresh)
         return false;
     return true;
@@ -2901,6 +3033,12 @@ void Tracking::SearchLocalPoints()
         if (mbInertiaMode) {
             th = std::max(th, 10);
             std::cout << "[SearchLocalPoints] Inertia: th=" << th << "\n";
+        }
+
+        double rotDeg = ComputeVelocityRotDeg();
+        if (rotDeg > 2.5) {
+            th = std::max(th, std::min(15, (int)(th + (rotDeg - 2.5) * 1.5)));
+            std::cout << "[SearchLocalPoints] FastRot (" << rotDeg << " deg): th=" << th << "\n";
         }
 
         matcher.SearchByProjection(mCurrentFrame, mvpLocalMapPoints, th);
@@ -3044,10 +3182,7 @@ bool Tracking::NeedNewKeyFrame()
     }
 
     const int nKFs = mpMap->KeyFramesInMap();
-    // V1.3: boost mode bỏ qua cooldown mMaxFrames — ta muốn tạo KF ngay
-    // sau khi relocalize xong để rebuild local map nhanh. Cooldown bình thường
-    // ngăn KF spam sau relocalize nhưng với soft reset thì ta CẦN KF nhanh.
-    if (!bBoost && mCurrentFrame.mnId < mnLastRelocFrameId + mMaxFrames && nKFs > mMaxFrames)
+    if (!bBoost && mCurrentFrame.mnId < mnLastRelocFrameId + mMinFrames + 2 && nKFs > mMaxFrames)
         return false;
 
     int nMinObs  = (nKFs <= 2) ? 2 : 3;
@@ -3310,7 +3445,7 @@ bool Tracking::TrackWithOpticalFlow()
     std::cout << "[LK] Valid pts after FB check: " << pts_3d.size()
               << "/" << mvPrevPts.size() << "\n";
 
-    if ((int)pts_3d.size() < 8) {
+    if ((int)pts_3d.size() < 5) {
         std::cout << "[LK] Too few pts.\n";
         return false;
     }
@@ -3319,9 +3454,15 @@ bool Tracking::TrackWithOpticalFlow()
     cv::Mat rvec, tvec;
     std::vector<int> inliers_idx;
     bool use_guess = false;
-    if (!mLastFrame.mTcw.empty()) {
-        cv::Rodrigues(mLastFrame.mTcw.rowRange(0,3).colRange(0,3), rvec);
-        tvec = mLastFrame.mTcw.rowRange(0,3).col(3).clone();
+    cv::Mat pose_seed;
+    if (!mVelocity.empty() && !mLastFrame.mTcw.empty()) {
+        pose_seed = mVelocity * mLastFrame.mTcw;
+    } else if (!mLastFrame.mTcw.empty()) {
+        pose_seed = mLastFrame.mTcw;
+    }
+    if (!pose_seed.empty()) {
+        cv::Rodrigues(pose_seed.rowRange(0,3).colRange(0,3), rvec);
+        tvec = pose_seed.rowRange(0,3).col(3).clone();
         use_guess = true;
     }
 
@@ -3330,7 +3471,7 @@ bool Tracking::TrackWithOpticalFlow()
                                        100, 4.0f, 0.99, inliers_idx,
                                        cv::SOLVEPNP_ITERATIVE);
 
-    if (!pnp_ok || (int)inliers_idx.size() < 6) {
+    if (!pnp_ok || (int)inliers_idx.size() < 5) {
         std::cout << "[LK] PnP failed (" << inliers_idx.size() << " inliers).\n";
         return false;
     }
@@ -3350,41 +3491,106 @@ bool Tracking::TrackWithOpticalFlow()
     fill(mCurrentFrame.mvpMapPoints.begin(), mCurrentFrame.mvpMapPoints.end(), nullptr);
     fill(mCurrentFrame.mvbOutlier.begin(),   mCurrentFrame.mvbOutlier.end(),   false);
 
-    // Assign MapPoints to nearest keypoints
+    // Assign PnP inliers to nearest ORB keypoints WITHOUT overwriting positions.
+    // Overwriting mvKeysUn/mvKeys corrupts the ORB feature layout and prevents
+    // SearchByProjection from finding descriptor matches on subsequent frames,
+    // trapping the system in an LK-only loop that drifts in scale.
+    int n_assigned = 0;
     for (int idx : inliers_idx) {
         const cv::Point2f& p = pts_2d[idx];
-        float best_d = 4.0f; int best_k = -1;
+        float best_d = 15.0f; int best_k = -1;
         for (int k = 0; k < mCurrentFrame.N; ++k) {
-            float d = std::hypot(mCurrentFrame.mvKeysUn[k].pt.x - p.x,
-                                 mCurrentFrame.mvKeysUn[k].pt.y - p.y);
+            if (mCurrentFrame.mvpMapPoints[k] != nullptr) continue;
+            float d = std::hypot(mCurrentFrame.mvKeys[k].pt.x - p.x,
+                                 mCurrentFrame.mvKeys[k].pt.y - p.y);
             if (d < best_d) { best_d = d; best_k = k; }
         }
-        if (best_k >= 0) mCurrentFrame.mvpMapPoints[best_k] = valid_mps[idx];
+        if (best_k >= 0) {
+            mCurrentFrame.mvpMapPoints[best_k] = valid_mps[idx];
+            mCurrentFrame.mvbOutlier[best_k] = false;
+            n_assigned++;
+        }
     }
 
     // ── 6. Refine with PoseOptimization ──────────────────────────────────────
-    Optimizer::PoseOptimization(&mCurrentFrame);
+    if (n_assigned >= 5) {
+        Optimizer::PoseOptimization(&mCurrentFrame);
+    }
 
     int n_final = 0;
     for (int i = 0; i < mCurrentFrame.N; ++i)
         if (mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
             n_final++;
 
-    std::cout << "[LK] Final inliers after PoseOpt: " << n_final << "\n";
-    if (n_final < 6) return false;
+    std::cout << "[LK] PnP inliers: " << inliers_idx.size()
+              << ", assigned: " << n_assigned
+              << ", final: " << n_final << "\n";
 
-    // ── 7. Update LK seeds ───────────────────────────────────────────────────
+    if (n_final < 5) return false;
+
+    // ── 7. Update LK seeds directly from ALL valid PnP inliers ───────────────
     mImGray.copyTo(mPrevGray);
     mvPrevPts.clear(); mvPrevMPs.clear();
-    for (int i = 0; i < mCurrentFrame.N; ++i) {
-        MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
-        if (pMP && !mCurrentFrame.mvbOutlier[i] && !pMP->isBad()) {
-            mvPrevPts.push_back(mCurrentFrame.mvKeysUn[i].pt);
+    std::unordered_set<MapPoint*> lkSeenMPs;
+    for (int idx : inliers_idx) {
+        mvPrevPts.push_back(pts_2d[idx]);
+        mvPrevMPs.push_back(valid_mps[idx]);
+        lkSeenMPs.insert(valid_mps[idx]);
+    }
+
+    // Replenish LK seeds: project other visible MapPoints from local map
+    if (mvPrevPts.size() < 60 && !mCurrentFrame.mTcw.empty()) {
+        cv::Mat Rcw = mCurrentFrame.mTcw.rowRange(0,3).colRange(0,3);
+        cv::Mat tcw = mCurrentFrame.mTcw.rowRange(0,3).col(3);
+        float fx = mCurrentFrame.fx;
+        float fy = mCurrentFrame.fy;
+        float cx = mCurrentFrame.cx;
+        float cy = mCurrentFrame.cy;
+
+        for (MapPoint* pMP : mvpLocalMapPoints) {
+            if (!pMP || pMP->isBad() || lkSeenMPs.count(pMP)) continue;
+            if (!mCurrentFrame.isInFrustum(pMP, 0.5f)) continue;
+
+            cv::Mat x3Dw = pMP->GetWorldPos();
+            cv::Mat x3Dc = Rcw * x3Dw + tcw;
+            float z = x3Dc.at<float>(2);
+            if (z <= 0.2f) continue;
+
+            float u = fx * (x3Dc.at<float>(0) / z) + cx;
+            float v = fy * (x3Dc.at<float>(1) / z) + cy;
+            if (u < 10.0f || u >= mImGray.cols - 10.0f || v < 10.0f || v >= mImGray.rows - 10.0f)
+                continue;
+
+            if (mbUseMask) {
+                const cv::Mat& emask = mCurrentFrame.GetExcludeMask();
+                if (!emask.empty() && emask.at<uchar>((int)v, (int)u) == 0)
+                    continue;
+            }
+
+            mvPrevPts.emplace_back(u, v);
             mvPrevMPs.push_back(pMP);
+            lkSeenMPs.insert(pMP);
+            if (mvPrevPts.size() >= 80) break;
         }
     }
 
+    // Do NOT set mVelocity here — let Track() compute it from the final pose.
+    // Setting velocity inside LK causes a feedback loop where the sanity check
+    // later clears it, forcing the next frame into the empty-velocity branch
+    // which again falls to LK.
+
+    mbLastRecoveryWasLK = true;
     mnLKFallbackFrames++;
+
+    // Limit consecutive LK frames: after 5 frames of pure LK the accumulated
+    // PnP drift becomes too large to be useful.  Let the system fall to LOST
+    // so that proper relocalization (BoW / QuickCovis) can kick in.
+    if (mnLKFallbackFrames > 5) {
+        std::cout << "[LK] Max consecutive LK frames (" << mnLKFallbackFrames << ") reached, giving up.\n";
+        mnLKFallbackFrames = 0;
+        return false;
+    }
+
     return true;
 }
 
@@ -3643,7 +3849,13 @@ bool Tracking::Relocalization()
                     }
                 }
             }
-            if (nGood >= minGood) { bMatch = true; break; }
+            if (nGood >= minGood) {
+                mpReferenceKF = vpCandidateKFs[i];
+                mCurrentFrame.mpReferenceKF = vpCandidateKFs[i];
+                mbLastRecoveryWasQuickCovis = true;
+                bMatch = true;
+                break;
+            }
         }
     }
 
@@ -3706,19 +3918,34 @@ bool Tracking::MapPreservingReset()
     // seed. Neu mLastFrame stale, projection search se miss het.
     // Dung mpReferenceKF lam placeholder de recovery co diem khoi dau hop ly.
     KeyFrame* pSeedKF = nullptr;
-    if (mpReferenceKF && !mpReferenceKF->isBad())
+    if (mpReferenceKF && !mpReferenceKF->isBad() && !mbPostResetBoost &&
+        mpReferenceKF->TrackedMapPoints(1) >= 30)
     {
         pSeedKF = mpReferenceKF;
     }
     else
     {
-        int bestObs = 0;
-        for (auto* kf : mpMap->GetAllKeyFrames())
+        // Cycle across well-observed KeyFrames if mpReferenceKF is a poor/wall KF
+        // or if a previous soft-reset seed did not recover tracking.
+        std::vector<KeyFrame*> vpAllKFs = mpMap->GetAllKeyFrames();
+        std::sort(vpAllKFs.begin(), vpAllKFs.end(),
+                  [](KeyFrame* a, KeyFrame* b) {
+                      return a->TrackedMapPoints(1) > b->TrackedMapPoints(1);
+                  });
+        static size_t sSeedCycleIdx = 0;
+        for (size_t k = 0; k < vpAllKFs.size(); ++k)
         {
+            KeyFrame* kf = vpAllKFs[(sSeedCycleIdx + k) % vpAllKFs.size()];
             if (!kf || kf->isBad()) continue;
-            int obs = static_cast<int>(kf->GetMapPointMatches().size());
-            if (obs > bestObs) { bestObs = obs; pSeedKF = kf; }
+            if (kf != mpReferenceKF || vpAllKFs.size() == 1)
+            {
+                pSeedKF = kf;
+                sSeedCycleIdx = (sSeedCycleIdx + k + 1) % vpAllKFs.size();
+                break;
+            }
         }
+        if (!pSeedKF && mpReferenceKF && !mpReferenceKF->isBad())
+            pSeedKF = mpReferenceKF;
     }
     if (pSeedKF)
     {
@@ -3726,7 +3953,8 @@ bool Tracking::MapPreservingReset()
         mLastFrame.mpReferenceKF = pSeedKF;
         mpReferenceKF = pSeedKF;
         std::cout << "[SoftReset] Seeded mLastFrame from KF "
-                  << pSeedKF->mnId << "\n";
+                  << pSeedKF->mnId << " (trackedMPs="
+                  << pSeedKF->TrackedMapPoints(1) << ")\n";
     }
 
     // Activate post-reset KF boost: NeedNewKeyFrame() se ha nguong tam thoi

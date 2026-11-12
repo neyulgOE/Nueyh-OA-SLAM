@@ -365,7 +365,7 @@ void System::Shutdown()
     if (mpARViewer) mpARViewer->RequestFinish();
     if(mpViewer)
     {
-        // mpViewer->RequestFinish();
+        mpViewer->RequestFinish();
         while(!mpViewer->isFinished())
             usleep(5000);
     }
@@ -392,9 +392,6 @@ void System::Shutdown()
         }
     }
 
-    if(mpViewer){
-        pangolin::BindToContext("ORB-SLAM2: Map Viewer");
-    }
     CategoryColorsManager::FreeInstance();
 }
 

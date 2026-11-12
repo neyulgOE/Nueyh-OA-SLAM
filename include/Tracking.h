@@ -321,14 +321,14 @@ public:
 
     // ── V1.1: configurable quality thresholds (read from settings file) ─────
     // Defaults match the original V1 hard-coded behaviour.
-    int mRelocMinGoodInliers     = 50;
+    int mRelocMinGoodInliers     = 30;
     int mKFMinInliersNoOcclusion = 15;
-    int mKFMinInliersOcclusion   = 12;
+    int mKFMinInliersOcclusion   = 10;
 
     // ── V1.4: BoW-independent projection relocalization ──────────────────────
     // Minimum inliers (after PoseOptimization) required to accept a pose found
     // by RelocalizationByProjectionAllKFs(). Configurable via settings file.
-    int mProjRelocMinInliers = 25;
+    int mProjRelocMinInliers = 15;
 
     // ── V1.3: post-reset KF-insertion boost ───────────────────────────────────
     // Set to true by MapPreservingReset(). While active, NeedNewKeyFrame()
@@ -538,10 +538,11 @@ private:
     // Build person-exclusion mask from current_frame_good_detections_.
     // kernel_size: erode kernel (5 for V1 — smaller than V0's 13 to protect ceiling).
     cv::Mat BuildPersonMask(const cv::Size& sz, int kernel_size = 5) const;
-    // V1.9: true khi pose frame hiện tại đến từ QuickCovisibilityRecovery()
-    // (cheap bridge, không phải full relocalization). TrackLocalMap() dùng
-    // để hạ ngưỡng 50-inlier-post-reloc xuống mức phù hợp hơn.
+    // V1.9: true khi pose frame hiện tại đến từ QuickCovisibilityRecovery() / LK / QuickRotation
+    // TrackLocalMap() dùng để không áp đặt ngưỡng 50 inliers lên local recovery.
     bool mbLastRecoveryWasQuickCovis = false;
+    bool mbLastRecoveryWasLK = false;
+    bool mbLastRecoveryWasQuickRot = false;
 };
 
 } // namespace ORB_SLAM2

@@ -195,6 +195,17 @@ public:
     // MapPoints associated to keypoints
     std::vector<MapPoint*> mvpMapPoints;
 
+    // Long-Term Place Recognition & CLAHE-SIFT Matching (Experiment 5)
+    void ComputePlaceDescriptor();
+    cv::Mat mImGrayCache;
+    cv::Mat mExcludeMaskCache;
+    cv::Mat mPlaceDescriptor;                 // 1x256 CV_32F L2-normalized global descriptor
+    std::vector<cv::KeyPoint> mvSiftKeys;     // CLAHE-SIFT keypoints on static regions
+    cv::Mat mSiftDescriptors;                 // Nx128 CV_32F SIFT descriptors
+    std::vector<int> mvSiftToOrbIdx;          // Maps SIFT keypoint index -> nearest ORB keypoint index (-1 if none)
+    bool mbPlaceComputed = false;
+    std::mutex mMutexPlace;
+
     // The following variables need to be accessed trough a mutex to be thread safe.
 protected:
 

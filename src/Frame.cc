@@ -40,7 +40,8 @@ Frame::Frame(const Frame &frame)
       mpReferenceKF(frame.mpReferenceKF), mnScaleLevels(frame.mnScaleLevels),
       mfScaleFactor(frame.mfScaleFactor), mfLogScaleFactor(frame.mfLogScaleFactor),
       mvScaleFactors(frame.mvScaleFactors), mvInvScaleFactors(frame.mvInvScaleFactors),
-      mvLevelSigma2(frame.mvLevelSigma2), mvInvLevelSigma2(frame.mvInvLevelSigma2)
+      mvLevelSigma2(frame.mvLevelSigma2), mvInvLevelSigma2(frame.mvInvLevelSigma2),
+      mExcludeMask(frame.mExcludeMask), mImGray(frame.mImGray)
 {
     for (int i = 0; i < FRAME_GRID_COLS; i++)
         for (int j = 0; j < FRAME_GRID_ROWS; j++)
@@ -61,6 +62,7 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
 {
     { std::lock_guard<std::mutex> lock(mMutexNextId); mnId = nNextId++; }
     mExcludeMask = exclude_mask.clone();
+    mImGray = imLeft;
 
     mnScaleLevels = mpORBextractorLeft->GetLevels();
     mfScaleFactor = mpORBextractorLeft->GetScaleFactor();
@@ -114,6 +116,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
 {
     { std::lock_guard<std::mutex> lock(mMutexNextId); mnId = nNextId++; }
     mExcludeMask = exclude_mask.clone();
+    mImGray = imGray;
 
     mnScaleLevels = mpORBextractorLeft->GetLevels();
     mfScaleFactor = mpORBextractorLeft->GetScaleFactor();
@@ -168,6 +171,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp,
     else { mnId = nNextId; }
 
     mExcludeMask = exclude_mask.clone();
+    mImGray = imGray;
 
     mnScaleLevels = mpORBextractorLeft->GetLevels();
     mfScaleFactor = mpORBextractorLeft->GetScaleFactor();

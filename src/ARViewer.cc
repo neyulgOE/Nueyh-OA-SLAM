@@ -205,6 +205,7 @@ void ARViewer::Run()
         }
 
         pangolin::FinishFrame();
+        usleep(15000); // Throttle rendering to ~60 FPS, avoid pegging CPU core
 
         if (Stop())
         {

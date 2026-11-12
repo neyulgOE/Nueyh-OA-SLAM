@@ -1,0 +1,45 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters. Accurate values from nuScenes calibrated_sensor for CAM_FRONT
+#--------------------------------------------------------------------------------------------
+Camera.type: "PinHole"
+Camera.fx: 1266.417203046554
+Camera.fy: 1266.417203046554
+Camera.cx: 816.2670197447984
+Camera.cy: 491.50706579294757
+
+Camera.k1: 0.0
+Camera.k2: 0.0
+Camera.p1: 0.0
+Camera.p2: 0.0
+Camera.k3: 0.0             # Distortion = 0 (images đã rectified)
+
+Camera.width: 1600
+Camera.height: 900
+
+Camera.fps: 15.0           # Theo spec camera
+
+# RGB images
+Camera.RGB: 1
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters (tune nếu cần cho scenes đông đúc)
+#--------------------------------------------------------------------------------------------
+ORBextractor.nFeatures: 3200
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 25
+ORBextractor.minThFAST: 7
+
+# Viewer Parameters (giữ nguyên hoặc điều chỉnh)
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3
+Viewer.ViewpointX: 0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500

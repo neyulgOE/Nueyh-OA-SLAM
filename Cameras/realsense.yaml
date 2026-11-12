@@ -1,0 +1,42 @@
+%YAML:1.0
+
+# Camera Parameters for OA-SLAM (D455 - 640x480)
+Camera.width: 640
+Camera.height: 480
+Camera.fps: 15.0
+
+# Intrinsic (tuned từ RealSense D455)
+Camera.fx: 615.0
+Camera.fy: 615.0
+Camera.cx: 320.0
+Camera.cy: 240.0
+
+# Distortion
+Camera.k1: 0.0
+Camera.k2: 0.0
+Camera.p1: 0.0
+Camera.p2: 0.0
+Camera.k3: 0.0
+
+# RGB-D specific
+Camera.bf: 0.0
+Camera.ThDepth: 40.0
+
+# ORB Extractor params
+ORBextractor.nFeatures: 1500
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+# Viewer
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3
+Viewer.ViewpointX: 0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500

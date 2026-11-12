@@ -21,6 +21,8 @@
 #include "KeyFrame.h"
 #include "Converter.h"
 #include "ORBmatcher.h"
+#include <opencv2/features2d.hpp>
+#include <opencv2/imgproc.hpp>
 #include<mutex>
 
 namespace ORB_SLAM2
@@ -53,7 +55,11 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
             mGrid[i][j] = F.mGrid[i][j];
     }
 
-    SetPose(F.mTcw);    
+    SetPose(F.mTcw);
+    if (!F.mImGray.empty())
+        mImGrayCache = F.mImGray.clone();
+    if (!F.mExcludeMask.empty())
+        mExcludeMaskCache = F.mExcludeMask.clone();
 }
 
 
@@ -70,6 +76,104 @@ void KeyFrame::ComputeBoW()
         // We assume the vocabulary tree has 6 levels, change the 4 otherwise
         mpORBvocabulary->transform(vCurrentDesc,mBowVec,mFeatVec,4);
     }
+}
+
+void KeyFrame::ComputePlaceDescriptor()
+{
+    unique_lock<mutex> lock(mMutexPlace);
+    if (mbPlaceComputed)
+        return;
+    mbPlaceComputed = true;
+
+    if (mImGrayCache.empty())
+        return;
+
+    // 1. Illumination Normalization via CLAHE (handles bright/dark lighting shifts)
+    cv::Mat imClahe;
+    cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.5, cv::Size(8, 8));
+    clahe->apply(mImGrayCache, imClahe);
+
+    // 2. Extract CLAHE-SIFT keypoints & descriptors on static background (masked)
+    cv::Ptr<cv::SIFT> sift = cv::SIFT::create(500, 3, 0.03);
+    sift->detectAndCompute(imClahe, mExcludeMaskCache, mvSiftKeys, mSiftDescriptors);
+
+    // 3. Associate each SIFT keypoint with the nearest ORB keypoint within 6.0 px
+    //    so SIFT matches can directly retrieve 3D MapPoints for Sim3/PnP estimation.
+    mvSiftToOrbIdx.assign(mvSiftKeys.size(), -1);
+    for (size_t si = 0; si < mvSiftKeys.size(); ++si)
+    {
+        const cv::Point2f &sp = mvSiftKeys[si].pt;
+        float bestDist2 = 36.0f; // 6.0 px radius
+        int bestOrb = -1;
+        for (int oi = 0; oi < N; ++oi)
+        {
+            float dx = sp.x - mvKeysUn[oi].pt.x;
+            float dy = sp.y - mvKeysUn[oi].pt.y;
+            float d2 = dx * dx + dy * dy;
+            if (d2 < bestDist2)
+            {
+                bestDist2 = d2;
+                bestOrb = oi;
+            }
+        }
+        mvSiftToOrbIdx[si] = bestOrb;
+    }
+
+    // 4. Compute 256-D Global Place Descriptor:
+    //    - First 128 dims: 4x4 Spatial Grid x 8-bin Gradient Orientation Histogram (GIST/HoG) on CLAHE image
+    //    - Next 128 dims : Mean pooling of L2-normalized SIFT descriptors (VLAD-lite global signature)
+    mPlaceDescriptor = cv::Mat::zeros(1, 256, CV_32F);
+    float* pDesc = mPlaceDescriptor.ptr<float>(0);
+
+    cv::Mat gx, gy, mag, ang;
+    cv::Sobel(imClahe, gx, CV_32F, 1, 0, 3);
+    cv::Sobel(imClahe, gy, CV_32F, 0, 1, 3);
+    cv::cartToPolar(gx, gy, mag, ang, true);
+
+    const int H = imClahe.rows;
+    const int W = imClahe.cols;
+    for (int r = 0; r < H; r += 2)
+    {
+        const float* pMag = mag.ptr<float>(r);
+        const float* pAng = ang.ptr<float>(r);
+        const uchar* pMsk = mExcludeMaskCache.empty() ? nullptr : mExcludeMaskCache.ptr<uchar>(r);
+        int gy_idx = std::min(3, (r * 4) / std::max(1, H));
+        for (int c = 0; c < W; c += 2)
+        {
+            if (pMsk && pMsk[c] == 0) continue;
+            int gx_idx = std::min(3, (c * 4) / std::max(1, W));
+            int bin = std::min(7, static_cast<int>(pAng[c] / 45.0f));
+            int idx = (gy_idx * 4 + gx_idx) * 8 + bin;
+            pDesc[idx] += pMag[c];
+        }
+    }
+    // L2-normalize first 128 dims
+    float norm1 = 0.0f;
+    for (int k = 0; k < 128; ++k) norm1 += pDesc[k] * pDesc[k];
+    norm1 = std::sqrt(norm1) + 1e-6f;
+    for (int k = 0; k < 128; ++k) pDesc[k] /= norm1;
+
+    // Aggregate SIFT descriptors into dims 128..255
+    if (!mSiftDescriptors.empty() && mSiftDescriptors.cols == 128)
+    {
+        for (int r = 0; r < mSiftDescriptors.rows; ++r)
+        {
+            const float* pSift = mSiftDescriptors.ptr<float>(r);
+            for (int k = 0; k < 128; ++k)
+                pDesc[128 + k] += pSift[k];
+        }
+        float norm2 = 0.0f;
+        for (int k = 128; k < 256; ++k) norm2 += pDesc[k] * pDesc[k];
+        norm2 = std::sqrt(norm2) + 1e-6f;
+        for (int k = 128; k < 256; ++k) pDesc[k] /= norm2;
+    }
+
+    // Final L2 normalization of the 256-D global descriptor
+    cv::normalize(mPlaceDescriptor, mPlaceDescriptor, 1.0, 0.0, cv::NORM_L2);
+
+    // Free raw image cache to keep RAM footprint low
+    mImGrayCache.release();
+    mExcludeMaskCache.release();
 }
 
 void KeyFrame::SetPose(const cv::Mat &Tcw_)

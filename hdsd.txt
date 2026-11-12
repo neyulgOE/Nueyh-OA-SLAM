@@ -1,0 +1,249 @@
+Cach calib
+	B1: Cai dat ROS2
+	B2  Chay lenh source /opt/ros/humble/setup.bash
+	    Chay tiep echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
+	    Chay tiep source ~/.bashrc
+Muc dich la de Source ROS2 tu dong moi khi mo terminal
+	B3: Mo terminal1 chay lenh ros2 run v4l2_camera v4l2_camera_node --ros-args -p device:=/dev/video0
+	    Mo terminal2 chay lenh ros2 topic list
+	    Mo terminal3 chay lenh ros2 run camera_calibration cameracalibrator \
+  --size 8x5 --square 0.025 \
+  --camera_name integrated_camera \
+  --no-service-check \
+  --ros-args -r image:=/image_raw
+	
+	Co the thay doi size ban co 
+	
+	
+	ros2 run camera_calibration cameracalibrator \
+  --size 9x6 --square 0.035 \
+  --camera_name integrated_camera \
+  --no-service-check \
+  --ros-args -r image:=/image_raw
+  
+  convert file pt sang onxx
+  python export.py --weights yolov5m.pt --include onnx --opset 12 --simplify --imgsz 320
+ 
+Cach compile code sau sua 
+ cd ~/OA-SLAM
+ rm -rf build
+ mkdir build
+ cd build
+cmake ..
+make -j8
+  
+  cd ~/OA-SLAM/bin
+  cd OA-SLAM/bin
+  SLAM MODE
+  ./oa-slam ../Vocabulary/ORBvoc.txt ../Cameras/TUM2.yaml ../Data/rgbd_dataset_freiburg2_desk/rgb.txt ../Data/detections_yolov5_tum_rgbd_fr2_desk.json null points+objects fr2
+
+LIVE MODE
+
+-chay bang file cua ho, loi
+   ./oa-slam ../Vocabulary/ORBvoc.txt ~/calibrationdata/ost.yaml webcam_0 ~/dataverse_files/yolov5m_640.onnx ignore_empty.txt points+objects output_folder
+   
+-chay bang file tu convert
+   ./oa-slam ../Vocabulary/ORBvoc.txt ~/calibrationdata/ost.yaml webcam_0 ~/yolov5/yolov5m.onnx ignore_empty.txt points+objects output_folder
+   
+   camera_poses_output_folder.json
+   
+  
+
+
+SLAM MODE VỚI NHIỀU NGƯỜI 
+
+./oa-slam ../Vocabulary/ORBvoc.txt ../Cameras/TUM2.yaml ../Data/rgbd_bonn_static/rgb.txt ../Data/detections_yolov5_tum_rgbd_fr2_desk.json null points+objects fr2
+
+
+./oa-slam ../Vocabulary/ORBvoc.txt ../Cameras/KITTI.yaml ../Data/00/image_2/rgb.txt ../Data/00/detections_yolov5_kitti.json null points+objects fr2
+
+
+./oa-slam ../Vocabulary/ORBvoc.txt ../Cameras/stuttgart.yaml ../Data/demoVideo/stuttgart_00/rgb.txt ../Data/surban38_detections.json null points+objects fr2
+
+
+./oa-slam ../Vocabulary/ORBvoc.txt ../Cameras/stuttgart1.yaml ../Data/demoVideo/stuttgart_00_resize/rgb.txt ../Data/surban38_detections_resize.json null points+objects fr2
+
+./oa-slam ../Vocabulary/ORBvoc.txt ../Cameras/stuttgart.yaml ../Data/demoVideo/stuttgart_00_resize1/rgb.txt ../Data/urban38_detections_resize.json null points+objects fr2
+
+./oa-slam ../Vocabulary/ORBvoc.txt ../Cameras/Nuscene.yaml ../Data/demoVideo/NuScenes_Export_Output/rgb.txt ../Data/nuscenes_detections_fixed.json null points+objects fr2
+
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/ip_resize.yaml \
+../Data/ip8_demovideo_resized/rgb.txt \
+../Data/ipdetections_fixed_final.json \
+null \
+points+objects \
+ip
+
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/d455.yaml \
+../Data/dataset/images/rgb.txt \
+../Data/d455_final.json \
+null \
+points+objects \
+realsense1
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/d455.yaml \
+../Data/dataset2/images/rgb.txt \
+../Data/realsense2_final.json \
+null \
+points+objects \
+realsense
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/d455.yaml \
+../Data/dataset2/images/rgb.txt \
+../Data/realsense25_final.json \
+null \
+points+objects \
+realsense
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/d455.yaml \
+../Data/dataset2/images/rgb.txt \
+../Data/realsense25_final.json \
+null \
+points+objects \
+realsense_cl_mask
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/d455.yaml \
+../Data/dataset3/images/rgb.txt \
+../Data/realsense35_final.json \
+null \
+points+objects \
+realsense3_mask
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/d455.yaml \
+../Data/dataset3/images/rgb.txt \
+../Data/realsense35_final.json \
+null \
+points+objects \
+realsense3_cl_mask
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/d455.yaml \
+../Data/dataset5/images/rgb.txt \
+../Data/realsense55_final.json \
+null \
+points+objects \
+realsense5_mask
+
+./oa-slam \
+../Vocabulary/ORBvoc.txt \
+../Cameras/d455.yaml \
+../Data/dataset5/images/rgb.txt \
+../Data/realsense55_final2.json \
+null \
+points+objects \
+realsense5_mask
+
+
+LOCATION MODE
+     ./oa-slam_localization ../Vocabulary/ORBvoc.txt ~/calibrationdata/ost.yaml webcam_0  ../bin/output_folder/camera_poses_output_folder.json null ../bin/output_folder/map_output_folder.yaml points+objects sink_reloc 0
+     
+     ./oa-slam_localization ../Vocabulary/ORBvoc.txt ~/calibrationdata/ost.yaml webcam_0  ../bin/output_folder/keyframes_poses_output_folder.json null ../bin/output_folder/map_output_folder.yaml points+objects sink_reloc 0
+     
+./oa-slam_localization ../Vocabulary/ORBvoc.txt ../Cameras/stuttgart1.yaml ../Data/demoVideo/stuttgart_00_resize/rgb.txt  ../bin/output_folder/camera_poses_output_folder.json null ../bin/output_folder/map_output_folder.yaml points+objects sink_reloc 0
+
+./oa-slam_localization ../Vocabulary/ORBvoc.txt ../Cameras/stuttgart1.yaml ../Data/demoVideo/stuttgart_00_resize/rgb.txt ../bin/output_folder/keyframes_poses_output_folder.json null ../bin/output_folder/map_output_folder.yaml points+objects sink_reloc 0
+
+
+./oa-slam_localization ../Vocabulary/ORBvoc.txt ../Cameras/d455.yaml ../Data/dataset2/images/ ../Data/realsense25_final.json ../bin/output_folder/keyframes_poses_output_folder.json null ../bin/output_folder/map_output_folder.yaml points+objects realsense 0
+
+
+
+./oa-slam_localization ../Vocabulary/ORBvoc.txt ../Cameras/d455.yaml  ../Data/dataset2/images/rgb.txt ../Data/realsense25_final.json null ../bin/realsense/map_realsense.yaml  points+objects  realsense 0
+
+
+./oa-slam_localization ../Vocabulary/ORBvoc.txt ../Cameras/d455.yaml  ../Data/dataset/images/rgb.txt ../Data/d455_final.json null ../bin/realsense/map_realsense.yaml  points+objects  realsense 0
+
+./oa-slam_localization ../Vocabulary/ORBvoc.txt ../Cameras/d455.yaml  ../Data/dataset/images/rgb.txt ../Data/d455_final.json null ../bin/realsense_cl_mask/map_realsense_cl_mask.yaml  points+objects  realsense_cl_mask 0
+
+
+realsense-viewer
+
+chạy ros2 
+cd ~/ros2_ws
+ros2 launch realsense2_camera rs_launch.py \
+  enable_depth:=false \
+  enable_color:=true
+
+
+source install/setup.bash
+ros2 launch realsense2_camera rs_launch.py \
+  backend:=rsusb \
+  enable_color:=true \
+  enable_depth:=false
+  
+  
+  
+b1:  ros2 launch realsense2_camera rs_launch.py backend:=rsusb enable_depth:=false enable_color:=true color_width:=424 color_height:=240 color_fps:=6 enable_accel:=false enable_gyro:=false enable_infra1:=false enable_infra2:=false
+
+ros2 launch realsense2_camera rs_launch.py \
+  backend:=rsusb \
+  enable_depth:=true \
+  enable_color:=true \
+  align_depth:=true \
+  color_width:=640 \
+  color_height:=480 \
+  depth_width:=640 \
+  depth_height:=480 \
+  color_fps:=15 \
+  depth_fps:=15 \
+  enable_accel:=true \
+  enable_gyro:=true \
+  gyro_fps:=200 \
+  accel_fps:=63 \
+  unite_imu_method:=copy \
+  tf_publish_rate:=250 \
+  enable_infra1:=false \
+  enable_infra2:=false
+
+b2:  ros2 run image_view image_view image:=/camera/camera/color/image_raw
+
+ros2 run rqt_image_view rqt_image_view /camera/camera/color/image_raw
+
+ros2 run image_view image_view image:=/camera/camera/color/image_raw
+
+
+
+cd ~/OA-SLAM   # hoặc vào thư mục build của OA-SLAM
+
+./oa-slam \
+  ../Vocabulary/ORBvoc.txt \
+  ../Cameras/realsense.yaml \
+  realsense \
+  ~/yolov5/yolov5m.onnx \
+  ignore_empty.txt \
+  points+objects \
+  realsense_live_output
+
+cd ~/OA-SLAM
+rm -rf build
+mkdir build && cd build
+cmake ..
+make -j8
+
+Note: keyframe
+
+
+ person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, traffic light, fire hydrant, stop sign, parking meter, bench, bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe, backpack, umbrella, handbag, tie, suitcase, frisbee, skis, snowboard, sports ball, kite, baseball bat, baseball glove, skateboard, surfboard, tennis racket, bottle, wine glass, cup, fork, knife, spoon, bowl, banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake, chair, couch, potted plant, bed, dining table, toilet, tv, laptop, mouse, remote, keyboard, cell phone, microwave, oven, toaster, sink, refrigerator, book, clock, vase, scissors, teddy bear, hair drier, toothbrush
+ 
+ 
+ 
+ 
+ Thay detect matching từ orb sang sift/surf, thử dùng thêm netvlad
+  

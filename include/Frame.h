@@ -156,9 +156,11 @@ public:
     static float mnMinX, mnMaxX, mnMinY, mnMaxY;
     static bool mbInitialComputations;
 
-private:
-    // 🔥 MASK LOẠI NGƯỜI
+    // 🔥 MASK LOẠI NGƯỜI & ẢNH XÁM CHO KEYFRAME PLACE DESCRIPTOR
     cv::Mat mExcludeMask;   // CV_8UC1, 0 = người, 255 = nền
+    cv::Mat mImGray;        // Shallow reference to grayscale image for KeyFrame SIFT/Place extraction
+
+private:
 
     void UndistortKeyPoints();
     void ComputeImageBounds(const cv::Mat &imLeft);

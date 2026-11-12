@@ -1,0 +1,34 @@
+%YAML:1.0
+
+# Camera calibration and distortion parameters (OpenCV)
+Camera.fx: 816.4022147406
+Camera.fy: 817.3838856281
+Camera.cx: 608.8265842758
+Camera.cy: 266.6886565244
+
+Camera.k1: -0.0500404858
+Camera.k2:  0.1200121717
+Camera.p1: -0.0006259806
+Camera.p2: -0.0011825064
+Camera.k3: -0.0635052080
+
+# Camera resolution
+Camera.width: 1280
+Camera.height: 560
+
+# Camera frames per second
+Camera.fps: 30
+
+# Color order (1 = RGB)
+Camera.RGB: 1
+
+# Close/Far threshold for depth (monocular → chỉ ảnh hưởng Conv depth)
+ThDepth: 40.0
+
+# ORB extractor parameters
+ORBextractor.nFeatures: 1000
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+

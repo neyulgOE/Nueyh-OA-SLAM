@@ -1,0 +1,48 @@
+%YAML:1.0
+
+# Camera Calibration cho iPhone 8 - Resize về 640x320
+Camera.type: "Monocular"
+
+# Camera Intrinsic parameters
+# Hệ số scale X: 640 / 4032 ≈ 0.15873
+# Hệ số scale Y: 320 / 3024 ≈ 0.10582
+Camera.fx: 518.9961
+Camera.fy: 346.7946
+Camera.cx: 323.8122
+Camera.cy: 166.6781
+
+# Distortion coefficients (Hệ số biến dạng không đổi khi resize)
+Camera.k1: 0.31961648
+Camera.k2: -1.81982508
+Camera.p1: 0.00673845
+Camera.p2: -0.00173268
+Camera.k3: 0.0
+
+# Image dimensions
+Camera.width: 640
+Camera.height: 320
+
+Camera.fps: 30.0
+Camera.RGB: 1
+
+# ORB Extractor Parameters (Giảm Features để tối ưu tốc độ)
+ORBextractor.nFeatures: 1500
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+# Viewer Settings (Cần cho AR Viewer trong OA-SLAM)
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3
+Viewer.ViewpointX: 0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500
+
+
+

@@ -28,6 +28,7 @@ along with OA-SLAM. If not, see <http://www.gnu.org/licenses/>.
 #include "Osmap.h"
 #include <nlohmann/json.hpp>
 #include <experimental/filesystem>
+#include <X11/Xlib.h>
 #include "Utils.h"
 
 using json = nlohmann::json;
@@ -39,6 +40,7 @@ void LoadImages(const string &strFile, vector<string> &vstrImageFilenames,
 
 int main(int argc, char **argv)
 {
+    XInitThreads();
     srand(time(nullptr));
     std::cout << "C++ version: " << __cplusplus << std::endl;
 
@@ -88,6 +90,12 @@ int main(int argc, char **argv)
 
     if (!use_webcam && path_to_images.back() != '/')
         path_to_images += "/";
+
+    if (!use_webcam && !fs::exists(path_to_images + image_list_file) &&
+        fs::exists(path_to_images + "images/" + image_list_file))
+    {
+        path_to_images += "images/";
+    }
 
     string output_folder = output_name;
     if (output_folder.back() != '/')
@@ -172,8 +180,9 @@ int main(int argc, char **argv)
         }
     }
 
-    // Create system
-    ORB_SLAM2::System SLAM(vocabulary_file, parameters_file, ORB_SLAM2::System::MONOCULAR, true, true, false);
+    // Create system (set OASLAM_HEADLESS=1 to run without Pangolin GUI)
+    const bool use_viewer = (std::getenv("OASLAM_HEADLESS") == nullptr);
+    ORB_SLAM2::System SLAM(vocabulary_file, parameters_file, ORB_SLAM2::System::MONOCULAR, use_viewer, use_viewer, false);
     SLAM.SetRelocalizationMode(relocalization_mode);
 
     // Vector for tracking time statistics
@@ -325,6 +334,11 @@ void LoadImages(const string &strFile, vector<string> &vstrImageFilenames,
 {
     ifstream f;
     f.open(strFile.c_str());
+    if (!f.is_open())
+    {
+        cerr << "ERROR: Failed to open image list file: " << strFile << endl;
+        return;
+    }
 
     string s0;
     double t = 0;

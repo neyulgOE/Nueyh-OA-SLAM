@@ -1,0 +1,76 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters (Đã cập nhật từ kết quả hiệu chuẩn của bạn)
+#--------------------------------------------------------------------------------------------
+Camera.type: "PinHole"
+
+# Intrinsics
+Camera.fx: 393.7687
+Camera.fy: 393.7962
+Camera.cx: 315.1953
+Camera.cy: 239.3341
+
+# Distortion Coefficients (Đã có thông số thực tế, không dùng 0.0)
+Camera.k1: -0.051800
+Camera.k2: 0.086428
+Camera.p1: -0.003486
+Camera.p2: 0.001818
+Camera.k3: -0.028417
+
+# Image size
+Camera.width: 640
+Camera.height: 480
+
+# FPS
+Camera.fps: 15 # RealSense D455 mặc định chạy tốt nhất ở 30fps
+
+# Stereo baseline (fx * baseline)
+# D455 có khoảng cách giữa 2 mắt IR là 95mm (0.095m)
+Camera.bf: 37.408  # Tính bằng: 393.7687 * 0.095
+
+# Color order (RGB hay BGR phụ thuộc vào code OpenCV đọc ảnh)
+Camera.RGB: 1 
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+# Tăng số feature lên để tracking ổn định hơn tại góc cua
+ORBextractor.nFeatures: 2000
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 8
+ORBextractor.minThFAST: 3
+
+#--------------------------------------------------------------------------------------------
+# Viewer Settings
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3
+Viewer.ViewpointX: 0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500
+
+#--------------------------------------------------------------------------------------------
+# PseudoDepth — DepthAnything v2 Small (ONNX) — Monocular depth prior
+# Để TẮT hoàn toàn: đặt PseudoDepth.Enabled: 0
+# Model download:
+#   https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx
+#--------------------------------------------------------------------------------------------
+#PseudoDepth.Enabled: 1
+#PseudoDepth.ModelPath: "/home/huyen1905/OA-SLAM/models/depth_anything_v2_small.onnx"
+#PseudoDepth.UseGPU: 1
+#PseudoDepth.GPUDevice: 0
+
+#--------------------------------------------------------------------------------------------
+# Tracking Quality Thresholds
+#--------------------------------------------------------------------------------------------
+Tracking.RelocMinGoodInliers: 15
+Tracking.KFMinInliersNoOcclusion: 12
+Tracking.KFMinInliersOcclusion: 8
+Tracking.ProjRelocMinInliers: 12
